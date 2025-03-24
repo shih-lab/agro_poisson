@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Nov 19 08:53:58 2023
+
+@author: simon_alamos
+"""
+
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# # This is to figure out what is the path separator symbol in the user operating system
+# import os
+# filesep = os.sep
+
+# # This is to let the user pick the folder where the raw data is stored without having to type the path
+# # I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+# import tkinter as tk
+# from tkinter import filedialog
+# root = tk.Tk()
+# root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+import scipy as scipy
+from scipy import optimize
+from scipy.stats import iqr
+from scipy.special import comb
+
+
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+
+#%%
+
+def partitionFunction(Xt,Yt,L,K):
+    # returns the partition function Z
+    Xrange = np.arange(0,Xt+1)
+    Yrange = np.arange(0,Yt+1)
+    Weights = np.zeros((Xt+1)*(Yt+1))
+    counter = 0
+    for Xb in Xrange:
+        for Yb in Yrange:
+            energy = (L/K)**(Xb+Yb)
+            multiplicity = comb(Xt,Xb) * comb(Yt,Yb)
+            weight = energy * multiplicity
+            Weights[counter] = weight
+            counter+=1
+            #print(Xb,Yb,weight,counter)
+    Z = np.sum(Weights)
+    return Z
+
+def ProbabilityBound(Xb,Yt,Z,L,K):
+    # calculates the probability P that EXACTLY Xb are bound
+    # is called by the AverageBound function
+    Yrange = np.arange(0,Yt+1)
+    Probabilities = np.zeros(Yt+1)
+    counter=0
+    for Yb in Yrange:
+        energy = (L/K)**(Xb+Yb)
+        multiplicity = comb(Xt,Xb) * comb(Yt,Yb)
+        prob = (energy * multiplicity)/Z
+        Probabilities[counter] = prob
+        counter+=1
+    P = sum(Probabilities)
+    return P
+
+def AverageBound(Xt,Yt,Z,L,K):
+    # returns the average number of X that are bound
+    Xrange = np.arange(0,Xt+1)
+    Average = np.zeros(Xt+1)
+    counter = 0
+    for Xb in Xrange:
+        P = ProbabilityBound(Xb,Yt,Z,L,K)
+        Average[counter] = Xb*P
+        counter+=1
+    Average = sum(Average)
+    return Average
+        
+        
+        
+#%%
+
+
+Xt = 1 # the total number of X
+Yt = 10# the total number of Y
+L = 1 # concentration of L in units of something
+K = 10000000000 # dissociation constant of L in the same units as L
+
+Z = partitionFunction(Xt,Yt,L,K)
+AvgX = AverageBound(Xt,Yt,Z,L,K)
+print(AvgX/Xt*100) # percentage of Xt that are bound
+
+
+#%% irreversible binding does not lead to nonlinearities
+
+k = 0.05 
+Ro = 0.02
+Xo = 0.1
+Yo = 0.9
+Xbo = 0
+Ybo = 0
+timeboxes = np.arange(1,10000)
+R = np.zeros(len(timeboxes))
+R[0] = Ro
+X = np.zeros(len(timeboxes))
+X[0] = Xo
+Y = np.zeros(len(timeboxes))
+Y[0] = Yo
+Xb = np.zeros(len(timeboxes))
+Yb = np.zeros(len(timeboxes))
+
+for idx, t in enumerate(timeboxes[0:-1]):
+    idx = idx+1
+    dR = -R[idx-1] * k * (X[idx-1]*Y[idx-1])
+    R[idx] = R[idx-1] + dR
+    
+    dX = -R[idx-1]* k * X[idx-1]
+    X[idx] = X[idx-1] + dX
+
+    dY = -R[idx-1]* k * Y[idx-1]
+    Y[idx] = Y[idx-1] + dY
+    
+    dXb = R[idx-1] * X[idx-1] * k
+    Xb[idx] = Xb[idx-1] + dXb
+    
+    dYb = R[idx-1] * Y[idx-1] * k    
+    Yb[idx] = Yb[idx-1] + dYb
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)    
+plt.plot(timeboxes,X,'r-')
+plt.plot(timeboxes,Xb,'r--')
+plt.plot(timeboxes,Y,'g-')
+plt.plot(timeboxes,Yb,'g--')
+
+print(Xb[-1]/X[0])
+print(Yb[-1]/Y[0])
+
+#%% but what I care about is whether  steady state Xb changes *nonlinearly* with Y
+YoVals = np.logspace(-3,1,30)
+XbFrac = np.zeros(len(YoVals))
+
+for i, Yo in enumerate(YoVals):
+    R = np.zeros(len(timeboxes))
+    R[0] = Ro
+    X = np.zeros(len(timeboxes))
+    X[0] = Xo
+    Y = np.zeros(len(timeboxes))
+    Y[0] = Yo
+    Xb = np.zeros(len(timeboxes))
+    Yb = np.zeros(len(timeboxes))
+    
+    for idx, t in enumerate(timeboxes[0:-1]):
+        idx = idx+1
+        dR = -R[idx-1] * k * (X[idx-1]*Y[idx-1])
+        R[idx] = R[idx-1] + dR
+        
+        dX = -R[idx-1]* k * X[idx-1]
+        X[idx] = X[idx-1] + dX
+    
+        dY = -R[idx-1]* k * Y[idx-1]
+        Y[idx] = Y[idx-1] + dY
+        
+        dXb = R[idx-1] * X[idx-1] * k
+        Xb[idx] = Xb[idx-1] + dXb
+        
+        dYb = R[idx-1] * Y[idx-1] * k    
+        Yb[idx] = Yb[idx-1] + dYb
+    
+    # fig, ax = plt.subplots()
+    # fig.set_size_inches(2, 2)    
+    # plt.plot(timeboxes,X,'r-')
+    # plt.plot(timeboxes,Xb,'r--')
+    # plt.plot(timeboxes,Y,'g-')
+    # plt.plot(timeboxes,Yb,'g--')
+    XbFrac[i] = Xb[-1]/X[0] 
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(YoVals/Xo,XbFrac/XbFrac[0])
+plt.xlabel('ratio of Y competitor \n to X labeled strain')
+plt.ylabel('fraction of X labeled strain \n that is bound \n compared to no competitor')
+plt.title('k = ' + num2str(k))
+#%% reversible binding does not lead to nonlinearities either
+
+k1 = 0.005 
+k2 = 0.001
+Ro = 0.00001
+Xo = 0.01
+Yo = 0.99
+Xbo = 0
+Ybo = 0
+timeboxes = np.arange(1,100000)
+R = np.zeros(len(timeboxes))
+R[0] = Ro
+X = np.zeros(len(timeboxes))
+X[0] = Xo
+Y = np.zeros(len(timeboxes))
+Y[0] = Yo
+Xb = np.zeros(len(timeboxes))
+Yb = np.zeros(len(timeboxes))
+
+for idx, t in enumerate(timeboxes[0:-1]):
+    idx = idx+1
+    dR = -R[idx-1] * k1 * (X[idx-1]*Y[idx-1]) + k2*Xb[idx-1] + k2*Yb[idx-1]
+    R[idx] = R[idx-1] + dR
+    
+    dX = -R[idx-1]* k1 * X[idx-1] + k2*Xb[idx-1]
+    X[idx] = X[idx-1] + dX
+
+    dY = -R[idx-1]* k1 * Y[idx-1]+ k2*Yb[idx-1]
+    Y[idx] = Y[idx-1] + dY
+    
+    dXb = R[idx-1] * X[idx-1] * k1 - k2*Xb[idx-1]
+    Xb[idx] = Xb[idx-1] + dXb
+    
+    dYb = R[idx-1] * Y[idx-1] * k1 - k2*Yb[idx-1]    
+    Yb[idx] = Yb[idx-1] + dYb
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)    
+plt.plot(timeboxes,X,'r-')
+plt.plot(timeboxes,Xb,'r--')
+plt.plot(timeboxes,Y,'g-')
+plt.plot(timeboxes,Yb,'g--')
+
+print(Xb[-1]/X[0])
+print(Yb[-1]/Y[0])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

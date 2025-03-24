@@ -1,0 +1,480 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Oct 10 18:49:44 2023
+
+@author: simon_alamos
+"""
+
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+import scipy as scipy
+from scipy import optimize
+from scipy.stats import iqr
+
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+
+
+#%% Poisson fits: we want to fit the microscopy data to the Poisson model presented by Carlson 2023 but doing one total OD at a time
+# we hope to show that depending on the total OD the results (and hence the predictions) are very different
+
+# load the data
+fractionTransformable = 0.65 # fraction of all nuclei that can get transformed
+
+ODdata1 = pd.read_csv('/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/8-28-23/AllData3.csv')
+ODdata2 = pd.read_csv('/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/9-19-23/AllData3.csv')
+ODdata3 = pd.read_csv('/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/10-23-23/AllData3.csv')
+ODdata3 = ODdata3[ODdata3['plant'].str.contains('OD005')] #because I imaged other things that day
+ODdata4 = pd.read_csv('/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/11-17-23/AllData3.csv')
+ODdata4 = ODdata4[ODdata4['plant'].str.contains('OD3')] #because I imaged other things that day
+ODdata5 = pd.read_csv('/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/12-4-23/AllData3.csv')
+ODdata5 = ODdata5[ODdata5['plant'].str.contains('OD1')] #because I imaged other things that day
+
+ODdata = pd.concat([ODdata1,ODdata2,ODdata3,ODdata4,ODdata5]) # combine them
+ODdata['fracGFP'] = ODdata['NGFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracGFP'].loc[ODdata['fracGFP']>1]=1
+ODdata['fracRFP'] = ODdata['NRFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracRFP'].loc[ODdata['fracRFP']>1]=1
+ODdata['fracEither'] = (ODdata['fracRFP'] + ODdata['fracGFP']) - ODdata['ObsPBoth']
+
+#define some other things
+ODtots = [0.05, 0.1, 0.5, 1, 2]
+colors = ['b','orange','g']
+
+#%% Fitting stuff: define the objective function
+
+# a useful function
+def find_nearest(array, value):
+    array = np.asarray(array)
+    idx = (np.abs(array - value)).argmin()
+    return idx
+
+# define the objective function
+def fractionNotTransformed(dilutionOD,  alpha): 
+    # dilutionOD = the OD of the culture that we're diluting, the one with the nuclear tag
+    # NotTransf = our Y values, the fraction of cells that are not transformed (in log scale)
+    # alpha = a sclaing factor to go from OD to poisson probability   
+    NotTransfP = np.exp(-alpha * dilutionOD) # Poisson probability of zero successes
+    return NotTransfP
+
+#%% grab the data
+# gather data
+ODtot = 3
+ThisODdata = ODdata[ODdata['ODtot']==ODtot]
+
+#remove the ODtot = 0.2 that I had included in the ODtot=0.1 experiment
+if ODtot == 0.1:
+    ThisODdata = ThisODdata[ThisODdata.OD != 0.2]
+    
+    #remove the ODtot = 1 that I had included in the ODtot=0.5 experiment
+if ODtot == 0.5:
+    ThisODdata = ThisODdata[ThisODdata.OD != 1]
+    
+if ODtot == 3:
+    ThisODdata = ThisODdata[ThisODdata.OD <3] #because after this data looks strange
+    
+if ODtot == 1:
+    ThisODdata = ThisODdata[ThisODdata.OD <2] #because after this data looks strange
+        
+    
+    
+
+
+ThisODdata['NotGFP'] = 1 - ThisODdata['fracGFP']
+ThisODdata['NotRFP'] = 1 - ThisODdata['fracRFP']
+ThisODdata['ODoneStrain'] = ThisODdata['OD']/2
+FitX = ThisODdata['ODoneStrain'] # ****  IMPORTANT!  ***** the OD in the dataframe is the mix of green and red strains
+FitYG = ThisODdata['NotGFP']
+FitYR = ThisODdata['NotRFP']
+xForFit_cont = np.logspace(-3.5,-0.2,100) # dense OD values for plotting purposes
+
+#perform the Poisson fit for GFP
+FitBounds = (-100,100) # lower and upper bounds for alpha
+poptG, pcov = scipy.optimize.curve_fit(fractionNotTransformed, FitX, FitYG, bounds = FitBounds)
+fit_alphaG = poptG[0]
+alphaG_error = np.round(np.sqrt(np.diag(poptG))[0][0],1)
+fitYG = fractionNotTransformed(FitX, fit_alphaG)
+fitY_contG = fractionNotTransformed(xForFit_cont, fit_alphaG)
+
+#perform the Poisson fit for RFP
+FitBounds = (-100,100) # lower and upper bounds for alpha
+poptR, pcov = scipy.optimize.curve_fit(fractionNotTransformed, FitX, FitYR, bounds = FitBounds)
+fit_alphaR = poptR[0]
+alphaR_error = np.round(np.sqrt(np.diag(poptR))[0][0],1)
+fitYR = fractionNotTransformed(FitX, fit_alphaR)
+fitY_contR = fractionNotTransformed(xForFit_cont, fit_alphaR)
+
+# calculate the means for plotting
+MeanPerOD = ThisODdata.groupby(by=["ODoneStrain"]).mean()
+SDPerOD = ThisODdata.groupby(by=["ODoneStrain"]).sem()
+NotGFPMeanPerOD = MeanPerOD['NotGFP']
+NotRFPMeanPerOD = MeanPerOD['NotRFP']
+NotGFPSDPerOD = SDPerOD['NotGFP']
+NotRFPSDPerOD = SDPerOD['NotRFP']
+ODvals = MeanPerOD.index
+
+
+#%% look at the data and the fit
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+# plot the fits
+plt.plot(np.log10(xForFit_cont),fitY_contG,'-', color='limegreen',lw=1.5)
+plt.plot(np.log10(xForFit_cont),fitY_contR,'-',color='orchid',lw=1.5)
+#sns.scatterplot(data=ThisODdata, x="ODoneStrain", y="NotGFP",marker='o',color='limegreen',alpha = 0.4,s=15,linewidth=0)
+#sns.scatterplot(data=ThisODdata, x="ODoneStrain", y="NotRFP",marker='^',color='orchid',alpha = 0.4,s=15,linewidth=0)
+#plot the mean and standard error of the data
+plt.errorbar(np.log10(ODvals),NotGFPMeanPerOD,NotGFPSDPerOD, fmt="o", color="k",mfc='limegreen',mec='black', ms=5)
+plt.errorbar(np.log10(ODvals),NotRFPMeanPerOD,NotRFPSDPerOD, fmt="^", color="k",mfc='orchid',mec='black', ms=6)
+
+
+plt.ylabel('fraction of untransformed \n transformable cells')
+plt.title('Poisson fit, total OD = ' + str(ODtot) + '\n'+ r'$\alpha$ GFP = ' + str(np.round(fit_alphaG,2)) + '$\pm$'+str(alphaG_error)+ 
+          '\n'+ r'$\alpha$ RFP = ' + str(np.round(fit_alphaR,2)) + '$\pm$'+str(alphaR_error)+ '\nfraction transformable = '+ str(fractionTransformable),
+          color='k')
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='--')
+ax.grid(which='minor', color='#CCCCCC', linestyle='--')
+
+plt.xticks(rotation=45)
+plt.ylim(-0.1,1.1)#np.min(FitYG)*0.1
+plt.xlim(-3.3,0.5)
+plt.grid()
+plt.xlabel('log10(OD) labeled strain')
+plt.show()
+
+#%% plot all the alpha fits
+# ODtots = [0.05,0.1, 0.5, 2,3]
+# meanG = [50.66,42.5,30,8.3,3.6]
+# SDG =[7.1,6.5,5.5,2.9,1.9]
+# meanR=[70.73,65.4, 44.4,11.4, 11.9]
+# SDR=[8.4,8.1,6.7,3.4,3.5]
+
+ODtots = [0.05,0.1, 0.5, 1, 2, 3]
+meanG = [50.66,42.5,30,14.2,8.3, 2.3]
+SDG =[7.1,6.5,5.5,3.8,2.9, 1.5]
+meanR=[70.73,65.4, 44.4,17.3,11.4, 11.7]
+SDR=[8.4,8.1,6.7,4.2,3.4,3.4]
+
+
+CarsonODs = [0.6, 0.6]
+Carsonalphas = [12.1, 11] #YFP leaf8, RFP leaf 9, YFP leaf 10
+CarsonSD = [3.5, 3.3]
+
+# fit alpha fit means to a line
+xForFit = ODtots
+yforFitG = np.log(meanG)
+yforFitR = np.log(meanR)
+[GreenSlope, GreenYintercept] = np.polyfit(xForFit,yforFitG,1)
+[RedSlope, RedYintercept] = np.polyfit(xForFit,yforFitR,1)
+xToPlotFit = np.arange(0,4,0.01)
+yToPlotGreenFit = GreenYintercept + (GreenSlope * xToPlotFit)
+yToPlotRedFit = RedYintercept + (RedSlope * xToPlotFit)
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.errorbar(ODtots,meanG,SDG, fmt="o", color="k",mfc='limegreen',mec='black', ms=5)
+plt.errorbar(ODtots,meanR,SDR, fmt="^", color="k",mfc='orchid',mec='black', ms=6)
+plt.errorbar(CarsonODs[0],Carsonalphas[0],CarsonSD[0], marker='s', fmt="o", color="k",mfc='gold',mec='black', ms=5)
+plt.errorbar(CarsonODs[1],Carsonalphas[1],CarsonSD[1], marker='v',fmt="o", color="k",mfc='orangered',mec='black', ms=6)
+plt.plot(xToPlotFit,np.exp(yToPlotGreenFit),color='limegreen',lw=1)
+plt.plot(xToPlotFit,np.exp(yToPlotRedFit),color='orchid',lw=1)
+
+# Change major ticks to show every 
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+#ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xticks(rotation=45)
+plt.xlabel('total OD')
+plt.ylabel('Fitted Poisson probability ' + r'$\alpha$' + '\n mean number of infection events \n per cell per unit OD')
+#plt.xscale('log')
+#plt.yscale('log')
+plt.xlim(-0.2,3.5)
+
+
+
+
+#%% plot the fraction not transformed for 1 color and all ODs
+
+ODtot = np.array([0.05, 0.1, 0.5, 1, 2, 3])
+Yint = RedYintercept
+M = RedSlope
+# Yint = RedYintercept
+# M = RedSlope
+a = np.exp(Yint+M*ODtot)
+b = np.exp(Yint)
+scalingFactor = a/b
+
+
+
+
+ODtots = [0.05,0.1, 0.5, 1, 2, 3]
+palette = cm.plasma(np.linspace(0, 1, len(ODtots)))
+fig, ax = plt.subplots()
+fig.set_size_inches(2.75, 2)
+
+for idx, ODtot in enumerate(ODtots):
+    thisColor = palette[idx,:]
+    scaling = 1#*scalingFactor[idx]
+    ThisODdata = ODdata[ODdata['ODtot']==ODtot]    
+    #remove the ODtot = 0.2 that I had included in the ODtot=0.1 experiment
+    if ODtot == 0.1:
+        ThisODdata = ThisODdata[ThisODdata.OD != 0.2]       
+        #remove the ODtot = 1 that I had included in the ODtot=0.5 experiment
+    if ODtot == 0.5:
+        ThisODdata = ThisODdata[ThisODdata.OD != 1]
+        
+    if ODtot == 3:
+        ThisODdata = ThisODdata[ThisODdata.OD <1]
+    
+    ThisODdata['NotGFP'] = 1 - ThisODdata['fracGFP']
+    ThisODdata['NotRFP'] = 1 - ThisODdata['fracRFP']
+    ThisODdata['ODoneStrain'] = ThisODdata['OD']/2
+    FitX = ThisODdata['ODoneStrain'] # ****  IMPORTANT!  ***** the OD in the dataframe is the mix of green and red strains
+    FitYG = ThisODdata['NotGFP']
+    FitYR = ThisODdata['NotRFP']
+    xForFit_cont = np.logspace(-3.5,-0.2,100) # dense OD values for plotting purposes
+    
+    #perform the Poisson fit for GFP
+    FitBounds = (-100,100) # lower and upper bounds for alpha
+    poptG, pcov = scipy.optimize.curve_fit(fractionNotTransformed, FitX, FitYG, bounds = FitBounds)
+    fit_alphaG = poptG[0]
+    alphaG_error = np.round(np.sqrt(np.diag(poptG))[0][0],1)
+    fitYG = fractionNotTransformed(FitX, fit_alphaG)
+    fitY_contG = fractionNotTransformed(xForFit_cont, fit_alphaG)
+    
+    #perform the Poisson fit for RFP
+    FitBounds = (-100,100) # lower and upper bounds for alpha
+    poptR, pcov = scipy.optimize.curve_fit(fractionNotTransformed, FitX, FitYR, bounds = FitBounds)
+    fit_alphaR = poptR[0]
+    alphaR_error = np.round(np.sqrt(np.diag(poptR))[0][0],1)
+    fitYR = fractionNotTransformed(FitX, fit_alphaR)
+    fitY_contR = fractionNotTransformed(xForFit_cont, fit_alphaR)
+    
+    # calculate the means for plotting
+    MeanPerOD = ThisODdata.groupby(by=["ODoneStrain"]).mean()
+    SDPerOD = ThisODdata.groupby(by=["ODoneStrain"]).sem()
+    NotGFPMeanPerOD = MeanPerOD['NotGFP']
+    NotRFPMeanPerOD = MeanPerOD['NotRFP']
+    NotGFPSDPerOD = SDPerOD['NotGFP']
+    NotRFPSDPerOD = SDPerOD['NotRFP']
+    ODvals = scaling*MeanPerOD.index
+    
+    # now do the plotting itself
+    #plt.plot(np.log10(xForFit_cont),fitY_contG,'-',lw=1.5,color=thisColor)
+    plt.plot(np.log10(xForFit_cont),fitY_contR,'-',lw=1.5,color=thisColor)
+    #plt.errorbar(np.log10(ODvals),NotGFPMeanPerOD,NotGFPSDPerOD, fmt="o", color="k",mfc = thisColor, mec='black', ms=5)
+    plt.errorbar(np.log10(ODvals),NotRFPMeanPerOD,NotRFPSDPerOD, fmt="o", color="k",mfc = thisColor, mec='black', ms=5)
+
+
+plt.ylabel('fraction of untransformed \n transformable cells')
+# plt.title('Poisson fit, total OD = ' + str(ODtot) + '\n'+ r'$\alpha$ GFP = ' + str(np.round(fit_alphaG,2)) + '$\pm$'+str(alphaG_error)+ 
+#           '\n'+ r'$\alpha$ RFP = ' + str(np.round(fit_alphaR,2)) + '$\pm$'+str(alphaR_error)+ '\nfraction transformable = '+ str(fractionTransformable),
+#           color='k')
+
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xticks(rotation=45)
+plt.ylim(-0.1,1.1)#np.min(FitYG)*0.1
+#plt.xlim(-4,-0.5)
+plt.grid()
+plt.xlabel('log10(effective OD) labeled strain')
+plt.title('rescaled RFP')
+plt.show()
+
+    
+
+
+
+
+
+
+
+#%%
+
+ODtot = np.array([0.05, 0.1, 0.5, 2])
+Yint = GreenYintercept
+M = GreenSlope
+
+a = np.exp(Yint+M*ODtot)
+b = np.exp(Yint)
+scalingFactor = a/b
+
+
+
+
+
+
+
+
+
+
+
+
+
+#%% measure fraction transformable
+
+ODdata1 = pd.read_csv('/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/8-28-23/AllData3.csv')
+ODdata2 = pd.read_csv('/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/9-19-23/AllData3.csv')
+ODdata = pd.concat([ODdata1,ODdata2]) # combine them
+ODdata['fracGFP'] = ODdata['NGFP']/ODdata['NBFP']
+ODdata['fracRFP'] = ODdata['NRFP']/ODdata['NBFP']
+ODdata['fracEither'] = (ODdata['fracRFP'] + ODdata['fracGFP']) - ODdata['ObsPBoth']
+
+ODtot = 0.5
+ThisODdata = ODdata[ODdata['ODtot']==ODtot]
+D05 = ThisODdata[ThisODdata.OD == 1]
+f05 = D05['fracGFP']
+
+ODtot = 2
+ThisODdata = ODdata[ODdata['ODtot']==ODtot]
+D2 = ThisODdata[ThisODdata.OD == 1]
+f2 = D2['fracGFP']
+
+fig = plt.figure()
+fig.set_size_inches(4, 4)
+plt.plot(np.ones(f2.shape),f2,'go')
+plt.plot(np.ones(f05.shape),f05,'o',color='orange')
+
+#%% Reproduce Carlson results
+CarlsonPath = '/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/9-19-23/Carlson_Fig3_data.csv'
+CarlsonData = pd.read_csv(CarlsonPath)
+xForFit_cont = np.logspace(-3,-0.2,100) # dense OD values for plotting purposes
+
+# YFP data
+CarlsonData['fracYFP'] = (CarlsonData['NYFP'] + CarlsonData['NYFPRFP'] + CarlsonData['NCFPYFP'] + CarlsonData['NALL'])/CarlsonData['Ntot']
+CarlsonData['fracNOTYFP'] = 1-CarlsonData['fracYFP']
+CarlsonData['detectedCells'] = CarlsonData['transformed_pavement'] + CarlsonData['GuardCells'] - + CarlsonData['darkStoma']*2
+CarlsonData['fracYFP2'] = (CarlsonData['NYFP'] + CarlsonData['NYFPRFP'] + CarlsonData['NCFPYFP'] + CarlsonData['NALL'])/CarlsonData['detectedCells']
+CarlsonData.loc[CarlsonData['fracYFP2']>1,'fracYFP2'] = 1
+CarlsonData['fracNOTYFP2'] = 1-CarlsonData['fracYFP2']
+
+# RFP data
+CarlsonData['fracRFP'] = (CarlsonData['NRFP'] + CarlsonData['NYFPRFP'] + CarlsonData['NCFPRFP'] + CarlsonData['NALL'])/CarlsonData['Ntot']
+CarlsonData['fracNOTRFP'] = 1-CarlsonData['fracYFP']
+CarlsonData['fracRFP2'] = (CarlsonData['NYFP'] + CarlsonData['NYFPRFP'] + CarlsonData['NCFPRFP'] + CarlsonData['NALL'])/CarlsonData['detectedCells']
+CarlsonData.loc[CarlsonData['fracYFP2']>1,'fracRFP2'] = 1
+CarlsonData['fracNOTRFP2'] = 1-CarlsonData['fracRFP2']
+
+
+leaf8data = CarlsonData[CarlsonData['Leaf']==8]
+
+
+#perform the 2 parameter fit for YFP in leaf 8
+FitBounds = (-100,100) # lower and upper bounds for alpha
+fitXY = leaf8data['YFP']
+fitYY = leaf8data['fracNOTYFP2']
+poptY, pcov = scipy.optimize.curve_fit(fractionNotTransformed, fitXY, fitYY, bounds = FitBounds)
+fit_alphaY = poptY[0]
+alphaY_error = np.round(np.sqrt(np.diag(poptY))[0][0],1)
+fitYY = fractionNotTransformed(fitXY, fit_alphaY)
+fitY_contY = fractionNotTransformed(xForFit_cont, fit_alphaY)
+
+#perform the 2 parameter fit for RFP in leaf 8
+FitBounds = (-100,100) # lower and upper bounds for alpha
+fitXR = leaf8data['RFP']
+fitYR = leaf8data['fracNOTRFP2']
+poptR, pcov = scipy.optimize.curve_fit(fractionNotTransformed, fitXR, fitYR, bounds = FitBounds)
+fit_alphaR = poptR[0]
+fit_alphaR = 20
+alphaR_error = np.round(np.sqrt(np.diag(poptR))[0][0],1)
+fitYR = fractionNotTransformed(fitXR, fit_alphaR)
+fitY_contR = fractionNotTransformed(xForFit_cont, fit_alphaR)
+
+
+# look at the data and the fit
+fig = plt.figure()
+#plt.style.use('ggplot') 
+fig.set_size_inches(4, 4)
+# plot all the data points
+#sns.scatterplot(data=leaf8data, x="YFP", y="fracYFP",marker='o',color='limegreen',alpha = 0.5,s=55)
+sns.scatterplot(data=leaf8data, x="YFP", y="fracNOTYFP2",marker='o',color='y',alpha = 0.5,s=55)
+plt.plot(xForFit_cont,fitY_contY,'--', color='y',lw=2)
+sns.scatterplot(data=leaf8data, x="RFP", y="fracNOTRFP2",marker='o',color='r',alpha = 0.5,s=55)
+plt.plot(xForFit_cont,fitY_contR,'--', color='r',lw=2)
+plt.xscale('log')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

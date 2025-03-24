@@ -1,0 +1,822 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Dec 22 16:33:34 2023
+
+@author: simon_alamos
+"""
+
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+# to enable LaTeX in labels
+mpl.rcParams['text.usetex'] = True
+mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
+
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+from scipy.special import comb
+import scipy as scipy
+from scipy import optimize
+from scipy.stats import iqr
+
+import math
+
+# this is to set up the figure style
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+
+#%%
+
+def Poisson_of_k(alpha,OD,k):
+    lam = alpha * OD
+    P = (lam**k) / math.factorial(k) * np.exp(-lam)
+    return P
+
+def getRsquared(ydata, fittedY):
+    # can get the residual sum of squares 
+    residuals = ydata - fittedY
+    ss_res = np.sum(residuals**2)
+    #  get the total sum of squares 
+    ss_tot = np.sum((ydata-np.mean(ydata))**2)
+    # get the R squared value
+    r_squared = 1 - (ss_res / ss_tot)
+    
+    return r_squared
+
+#%% I don't remmeber what is this for...
+
+# p = 0.90
+# q = 1-p
+alpha = 70
+
+ODvals = np.logspace(-3.5,0)
+Kvals = np.arange(1,100)
+Probs_per_OD = np.zeros(len(ODvals))
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+pVals = np.linspace(0.05,1,6)
+for p in pVals:
+    q = 1-p
+    for i, od in enumerate(ODvals):
+        P_per_k = np.zeros(len(Kvals))
+        for j, k in enumerate(Kvals):
+            P_per_k[j] = Poisson_of_k(alpha,od,k) * (1-q**k)
+        Probs_per_OD[i] = np.sum(P_per_k)
+        
+    plt.plot(ODvals,Probs_per_OD,'-')
+    plt.xscale('log')
+    
+    
+
+#%% load the data
+
+# load the experiment_database spreadsheet
+print('navigate to the folder where the experiment database file is stored - then select any file')
+file_path = filedialog.askopenfilename() # store the file path as a string
+lastFileSep = file_path.rfind(filesep) # find the position of the last path separator
+folderpath = file_path[0:lastFileSep] # get the part of the path corresponding to the folder where the chosen file was located
+experiment_database_filePath = folderpath + filesep + 'experiment_database.csv'
+experiment_database = pd.read_csv(experiment_database_filePath)    
+    
+# select which experiments to aggregate. Refer to 'experiment_database' spreadsheet for more info
+experimentIDs = ['7','8','10','11','13','15','16']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+BiBi_exp_database = experiment_database[condition]
+
+#initialize a dataframe to store values
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+BiBidata = pd.DataFrame([], columns=cols)
+
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in BiBi_exp_database['Experiment_ID'].values:
+    thisExperiment = BiBi_exp_database[BiBi_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    BiBidata = pd.concat([BiBidata,expCountsData])
+
+# convert the counts to int64
+BiBidata = BiBidata.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+fractionTransformable = 0.44 # fraction of all nuclei that can get transformed
+
+BiBidata['fracGFP'] = BiBidata['NGFP']/(BiBidata['NBFP']*fractionTransformable)
+BiBidata['fracGFP'].loc[BiBidata['fracGFP']>1]=1
+BiBidata['fracRFP'] = BiBidata['NRFP']/(BiBidata['NBFP']*fractionTransformable)
+BiBidata['fracRFP'].loc[BiBidata['fracRFP']>1]=1
+BiBidata['ObsPBoth'] = BiBidata['NBoth']/(BiBidata['NBFP']*fractionTransformable)
+BiBidata['ObsPBoth'].loc[BiBidata['ObsPBoth']>1]=1
+
+BiBidata['fracEither'] = (BiBidata['fracRFP'] + BiBidata['fracGFP']) - BiBidata['ObsPBoth']
+BiBidata['NotGFP'] = 1 - BiBidata['fracGFP']
+BiBidata['NotRFP'] = 1 - BiBidata['fracRFP']
+BiBidata['NotBoth'] = 1 - BiBidata['ObsPBoth']
+BiBidata['fracGFPOnly'] = BiBidata['fracGFP'] - BiBidata['ObsPBoth']
+BiBidata['fracRFPOnly'] = BiBidata['fracRFP'] - BiBidata['ObsPBoth']
+BiBidata['fracGFP2'] = BiBidata['fracGFP']/BiBidata['fracEither'] # prob of FFP given that cell was transformed
+BiBidata['fracRFP2'] = BiBidata['fracRFP']/BiBidata['fracEither'] # prob of RFP given that cell was transformed
+
+BiBidata['RedGivenGreen'] = BiBidata['NBoth']/BiBidata['NGFP'] # what fraction of those that express GFP, also express RFP
+BiBidata['GreenGivenRed'] = BiBidata['NBoth']/BiBidata['NRFP'] # what fraction of those that express RFP, also express GFP
+ 
+BiBidata['expBoth'] = BiBidata['fracGFP'] * BiBidata['fracRFP']
+
+BiBi_656_614_data = BiBidata[BiBidata['filename'].str.contains('BiBi656')]
+BiBi_656_614_data['ODoneStrain'] = BiBi_656_614_data['OD']
+
+Mix_656_614_data = BiBidata[BiBidata['filename'].str.contains('sep656')]
+Mix_656_614_data['ODoneStrain'] = Mix_656_614_data['OD']/2
+
+BiBi_654_514_data = BiBidata[BiBidata['filename'].str.contains('BiBi654')]
+BiBi_654_514_data['ODoneStrain'] = BiBi_654_514_data['OD']
+
+Mix_654_514_data = BiBidata[BiBidata['filename'].str.contains('sep654')]
+Mix_654_514_data['ODoneStrain'] = Mix_654_514_data['OD']/2
+
+meanBiBi_656_614 = BiBi_656_614_data.groupby('ODoneStrain').mean()
+errorBiBi_656_614 = BiBi_656_614_data.groupby('ODoneStrain').sem()
+
+meanMix_656_614 = Mix_656_614_data.groupby('ODoneStrain').mean()
+errorMix_656_614 = Mix_656_614_data.groupby('ODoneStrain').sem()
+
+meanBiBi_654_514 = BiBi_654_514_data.groupby('ODoneStrain').mean()
+errorBiBi_654_514 = BiBi_654_514_data.groupby('ODoneStrain').sem()
+
+meanMix_654_514 = Mix_654_514_data.groupby('ODoneStrain').mean()
+errorMix_654_514 = Mix_654_514_data.groupby('ODoneStrain').sem()
+    
+
+#%% now select the 'non-BiBi' experiments in case we want to compare them to BiBi data
+fractionTransformable = 0.44 # fraction of all nuclei that can get transformed
+experimentIDs = ['2','5']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+ODdilution_exp_database = experiment_database[condition]
+#initialize a dataframe to store values
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+ODdata = pd.DataFrame([], columns=cols)
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in ODdilution_exp_database['Experiment_ID'].values:
+    thisExperiment = ODdilution_exp_database[ODdilution_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    ODdata = pd.concat([ODdata,expCountsData])
+# convert the counts to int64
+ODdata = ODdata.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+ODdata['ODoneStrain'] = ODdata['OD']/2
+ODdata['fracGFP'] = ODdata['NGFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracGFP'].loc[ODdata['fracGFP']>1]=1
+ODdata['fracRFP'] = ODdata['NRFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracRFP'].loc[ODdata['fracRFP']>1]=1
+ODdata['NotGFP'] = 1 - ODdata['fracGFP']
+ODdata['NotRFP'] = 1 - ODdata['fracRFP']
+ODdata['ObsPBoth'] = ODdata['NBoth']/(ODdata['NBFP']*fractionTransformable)
+ODdata['ObsPBoth'].loc[ODdata['ObsPBoth']>1]=1
+ODdata['RedGivenGreen'] = ODdata['NBoth']/ODdata['NGFP'] # what fraction of those that express GFP, also express RFP
+ODdata['GreenGivenRed'] = ODdata['NBoth']/ODdata['NRFP'] # what fraction of those that express RFP, also express GFP
+
+# calculate the means and erors for plotting
+MeanPerDilution = ODdata.groupby(by=["ODoneStrain"]).mean()
+SDPerDilution = ODdata.groupby(by=["ODoneStrain"]).sem()
+NotGFPMeanPerOD = MeanPerDilution['NotGFP']
+NotRFPMeanPerOD = MeanPerDilution['NotRFP']
+NotGFPSDPerOD = SDPerDilution['NotGFP']
+NotRFPSDPerOD = SDPerDilution['NotRFP']
+ODvals = MeanPerDilution.index
+
+
+#%% fraction(BOTH) predicted vs observed scatter
+
+alpha = 60.15
+
+ODvals = np.logspace(-3.5,0)
+Kvals = np.arange(1,150)
+# fig, ax = plt.subplots()
+# fig.set_size_inches(2, 2)
+p = 0.62 # prob of transferring pVS1 given contact
+r = 0.37 # prob of transferring BBR1 given contact
+q = 1-p
+s = 1-r
+
+Probs_both_per_OD = np.zeros(len(ODvals)) #prob of detecting at least one of each
+Probs_pVS1_per_OD = np.zeros(len(ODvals)) #prob of detecting at least one pVS1
+Probs_BBR1_per_OD = np.zeros(len(ODvals)) #prob of detecting at least one BBR1
+
+for i, od in enumerate(ODvals):
+    Prob_both_per_k = np.zeros(len(Kvals))
+    Prob_pVS1_per_k = np.zeros(len(Kvals))
+    Prob_BBR1_per_k = np.zeros(len(Kvals))
+    for j, k in enumerate(Kvals): # number of agro-plant cell contacts
+        PofK = Poisson_of_k(alpha,od,k) # calculate the Poisson probability of k = 1, 2, 3...contacts
+
+        prob_of_at_least_one_pVS1 = 1-(q**k)
+        prob_of_at_least_one_BBR1 = 1-(s**k)
+        
+        Prob_pVS1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_pVS1
+        Prob_BBR1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_BBR1
+        
+        prob_of_both = PofK * prob_of_at_least_one_pVS1 * prob_of_at_least_one_BBR1
+        
+        Prob_both_per_k[j] = prob_of_both      
+        
+    Probs_both_per_OD[i] = np.sum(Prob_both_per_k)
+    Probs_pVS1_per_OD[i] = np.sum(Prob_pVS1_per_k)
+    Probs_BBR1_per_OD[i] = np.sum(Prob_BBR1_per_k)
+
+# fig, ax = plt.subplots()
+# fig.set_size_inches(2, 2)
+# plt.plot(ODvals,Probs_both_per_OD,'b-')
+# plt.plot(ODvals,Probs_pVS1_per_OD,'g-')
+# plt.plot(ODvals,Probs_BBR1_per_OD,'r-')
+# plt.legend(['both','pVS1','BBR1'],title='probability of expresing \n at least one copy of:',bbox_to_anchor =(1.05, 1))
+# plt.xscale('log')
+
+prob_both_indep_per_OD = Probs_pVS1_per_OD * Probs_BBR1_per_OD #prob of expressing at least one of each if they are independent
+
+SepBiBiData = BiBidata[BiBidata['filename'].str.contains('sep')]
+BiBiOnlyData = BiBidata[BiBidata['filename'].str.contains('BiBi')]
+
+SepBiBiData1 = SepBiBiData[SepBiBiData['plant'].str.contains('614')]
+SepBiBiData2 = SepBiBiData[SepBiBiData['plant'].str.contains('514')]
+BiBiOnlyData1 = BiBiOnlyData[BiBiOnlyData['plant'].str.contains('614')]
+BiBiOnlyData2 = BiBiOnlyData[BiBiOnlyData['plant'].str.contains('514')]
+
+#% observed vs expected cotransaformations
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+
+
+plt.plot(SepBiBiData1['ObsPBoth'],SepBiBiData1['expBoth'],'>',color='lightpink',ms=6,mec='k',mew=0.5)
+plt.plot(SepBiBiData2['ObsPBoth'],SepBiBiData2['expBoth'],'<',color='paleturquoise',ms=6,mec='k',mew=0.5)
+
+plt.plot(BiBiOnlyData1['ObsPBoth'],BiBiOnlyData1['expBoth'],'bs',ms=5,mec='k',mew=0.5)
+plt.plot(BiBiOnlyData2['ObsPBoth'],BiBiOnlyData2['expBoth'],'rD',ms=5,mec='k',mew=0.5)
+
+
+plt.plot(Probs_both_per_OD,prob_both_indep_per_OD,'y-')
+plt.plot(prob_both_indep_per_OD,prob_both_indep_per_OD,'k--')
+
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.ylabel('expected frequency of expressing both \n if independent')
+plt.xlabel('observed frequency \n expressing both')
+#plt.legend(['both','pVS1','BBR1'],title='probability of expresing \n at least one copy of:',bbox_to_anchor =(1.05, 1))
+plt.title('p = '+str(p) + '\n r = '+str(r))
+
+plt.xscale('log')
+plt.yscale('log')
+plt.xlim(0.001,1)
+plt.ylim(0.001,1)
+
+#% RED GIVEN GREEN
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(ODvals,Probs_both_per_OD/Probs_BBR1_per_OD,'r')
+plt.plot(ODvals,Probs_both_per_OD/Probs_pVS1_per_OD,'b')
+# these data gets generated by the script 'BiBi_analysis'
+
+plt.errorbar(meanBiBi_656_614.index, meanBiBi_656_614['RedGivenGreen'], errorBiBi_656_614['RedGivenGreen'],ls='none',marker='s',mfc='b',mec='k',color='b', ms=5,mew=0.5)
+plt.errorbar(meanBiBi_654_514.index, meanBiBi_654_514['RedGivenGreen'], errorBiBi_654_514['RedGivenGreen'],ls='none',marker='D',mfc='r',mec='k',color='r', ms=5,mew=0.5)
+# plt.errorbar(meanBiBi_656_614.index, meanBiBi_656_614['GreenGivenRed'], errorBiBi_656_614['GreenGivenRed'],ls='none',marker='o',mfc='salmon',mec='k',color='k', ms=5)
+# plt.errorbar(meanBiBi_654_514.index, meanBiBi_654_514['GreenGivenRed'], errorBiBi_654_514['GreenGivenRed'],ls='none',marker='D',mfc='cornflowerblue',mec='k',color='k', ms=5)
+plt.errorbar(meanMix_654_514.index*2, meanMix_654_514['RedGivenGreen'], errorMix_654_514['RedGivenGreen'],ls='none',marker='<',mfc='paleturquoise',mec='k',color='paleturquoise', ms=5,mew=0.5)
+plt.errorbar(meanMix_656_614.index*2, meanMix_656_614['RedGivenGreen'], errorMix_656_614['RedGivenGreen'],ls='none',marker='>',mfc='lightpink',mec='k',color='lightpink', ms=5,mew=0.5)
+plt.errorbar(MeanPerDilution.index*2, MeanPerDilution['RedGivenGreen'], SDPerDilution['RedGivenGreen'],ls='none',marker='v',mfc='khaki',mec='k',color='khaki', ms=5,mew=0.5)
+
+
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+
+plt.xscale('log')
+plt.yscale('log')
+plt.xlabel('log$_{10}$OD of reporter bacteria')
+plt.ylabel('fraction of GFP nuclei that also express RFP')
+plt.legend(['BBR1 nuclei expressing both','pVS1 nuclei expressing both',
+            'pVS1 GFP nuclei expressing BBR1 RFP','BBR1 GFP nuclei expressing pVS1 RFP',
+            'BBR1 RFP nuclei expressing pVS1 GFP','pVS1 RFP nuclei expressing BBR1 GFP','mixed strains (RFP pVS1, GFP BBR1)',
+            'mixed strains (GFP pVS1, RFP BBR1)','mixed strains (RFP pVS1, GFP pVS1)'],bbox_to_anchor =(1.05, 1))
+plt.ylim(0.02, 1.2)
+plt.title('p = '+str(p) + '\n r = '+str(r))
+plt.xlim(0.001,0.75)
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.errorbar(meanBiBi_656_614.index, meanBiBi_656_614['ObsPBoth'], errorBiBi_656_614['ObsPBoth'],ls='none',marker='s',mfc='b',mec='k',color='b', ms=5,mew=0.5)
+plt.errorbar(meanBiBi_654_514.index, meanBiBi_654_514['ObsPBoth'], errorBiBi_654_514['ObsPBoth'],ls='none',marker='D',mfc='r',mec='k',color='r', ms=5,mew=0.5)
+# plt.errorbar(meanBiBi_656_614.index, meanBiBi_656_614['GreenGivenRed'], errorBiBi_656_614['GreenGivenRed'],ls='none',marker='o',mfc='salmon',mec='k',color='k', ms=5)
+# plt.errorbar(meanBiBi_654_514.index, meanBiBi_654_514['GreenGivenRed'], errorBiBi_654_514['GreenGivenRed'],ls='none',marker='D',mfc='cornflowerblue',mec='k',color='k', ms=5)
+plt.errorbar(meanMix_654_514.index*2, meanMix_654_514['ObsPBoth'], errorMix_654_514['ObsPBoth'],ls='none',marker='<',mfc='paleturquoise',mec='k',color='paleturquoise', ms=5,mew=0.5)
+plt.errorbar(meanMix_656_614.index*2, meanMix_656_614['ObsPBoth'], errorMix_656_614['ObsPBoth'],ls='none',marker='>',mfc='lightpink',mec='k',color='lightpink', ms=5,mew=0.5)
+plt.errorbar(MeanPerDilution.index*2, MeanPerDilution['ObsPBoth'], SDPerDilution['ObsPBoth'],ls='none',marker='v',mfc='khaki',mec='k',color='khaki', ms=5,mew=0.5)
+
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.plot(ODvals,Probs_both_per_OD,'k')
+plt.xscale('log')
+plt.yscale('log')
+plt.ylim(0.001, 1.2)
+plt.xlim(0.001, 0.75)
+plt.xlabel('log$_{10}$OD of reporter strains')
+plt.ylabel('fraction of nuclei \n expressing GFP and RFP')
+
+
+#%% nonlinear least squares fit of p and q
+X1 = BiBiOnlyData1['ObsPBoth']
+Y1 = BiBiOnlyData1['expBoth']
+X2 = BiBiOnlyData2['ObsPBoth']
+Y2 = BiBiOnlyData2['expBoth']
+X3 = meanBiBi_656_614.index
+Y3 = meanBiBi_656_614['RedGivenGreen']
+X4 = meanBiBi_654_514.index
+Y4 = meanBiBi_654_514['RedGivenGreen']
+X5 = meanBiBi_656_614.index
+Y5 = meanBiBi_656_614['ObsPBoth']
+X6 = meanBiBi_654_514.index
+Y6 = meanBiBi_654_514['ObsPBoth']
+
+
+concatenatedXData = np.concatenate((X1,X2,X3,X4,X5,X6))
+concatenatedYData = np.concatenate((Y1,Y2,Y3,Y4,Y5,Y6))
+
+plt.plot(concatenatedXData,concatenatedYData,'o')
+
+def ExpPBothBiBi(ODi, alpha, p, q): #to fit X1 and X2
+    Kvals = np.arange(1,150)
+    Probs_both_per_OD = np.zeros(len(ODi))
+    for i, od in enumerate(ODi):
+        Prob_both_per_k = np.zeros(len(Kvals))
+        Prob_pVS1_per_k = np.zeros(len(Kvals))
+        Prob_BBR1_per_k = np.zeros(len(Kvals))
+        
+        for j, k in enumerate(Kvals): # number of agro-plant cell contacts
+            PofK = Poisson_of_k(alpha,od,k) # calculate the Poisson probability of k = 1, 2, 3...contacts
+            prob_of_at_least_one_pVS1 = (1-p**k)
+            prob_of_at_least_one_BBR1 = (1-q**k)       
+            Prob_pVS1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_pVS1
+            Prob_BBR1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_BBR1        
+            prob_of_both = PofK * prob_of_at_least_one_pVS1 * prob_of_at_least_one_BBR1        
+            Prob_both_per_k[j] = prob_of_both              
+        Probs_both_per_OD[i] = np.sum(Prob_both_per_k)       
+    return Probs_both_per_OD
+
+def ExpPPVS1(ODi, alpha, p): #to fit X1 and X2
+    Kvals = np.arange(1,150)
+    Probs_pVS1_per_OD = np.zeros(len(ODi))
+    for i, od in enumerate(ODi):
+        Prob_pVS1_per_k = np.zeros(len(Kvals))        
+        for j, k in enumerate(Kvals): # number of agro-plant cell contacts
+            prob_of_at_least_one_pVS1 = (1-p**k)    
+            Prob_pVS1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_pVS1
+        Probs_pVS1_per_OD[i] = np.sum(Prob_pVS1_per_k)       
+    return Probs_pVS1_per_OD
+
+def ExpPBBR1(ODi, alpha, q): #to fit X1 and X2
+    Kvals = np.arange(1,150)
+    Probs_pBBR1_per_OD = np.zeros(len(ODi))
+    for i, od in enumerate(ODi):
+        Prob_BBR1_per_k = np.zeros(len(Kvals))        
+        for j, k in enumerate(Kvals): # number of agro-plant cell contacts
+            prob_of_at_least_one_BBR1 = (1-q**k)    
+            Prob_BBR1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_BBR1
+        Probs_pBBR1_per_OD[i] = np.sum(Prob_BBR1_per_k)       
+    return Probs_pBBR1_per_OD
+
+
+
+
+X1 = BiBiOnlyData1['OD']
+X2 = BiBiOnlyData2['OD']
+alpha = 50
+p = 0.75
+q = 0.25
+fitY1 = ExpPBothBiBi(X1, alpha, p, q) 
+fitY2 = ExpPBothBiBi(X2, alpha, p, q) 
+obsY1 = BiBiOnlyData1['ObsPBoth']
+obsY2 = BiBiOnlyData2['ObsPBoth']
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(X1, obsY1,'bo')   
+plt.plot(X2, obsY2,'ro')   
+plt.plot(X1, fitY1,'ko')
+
+
+
+FitX1 = BiBiOnlyData1['OD']
+FitX2 = BiBiOnlyData2['OD']
+FitY1 = BiBiOnlyData1['ObsPBoth']
+FitY2 = BiBiOnlyData2['ObsPBoth']
+XforFit = np.concatenate((FitX1.values,FitX2.values))
+YforFit = np.concatenate((FitY1.values,FitY2.values))
+
+FitBounds = ((50,0.6,0.2),(70,1,1)) #alpha, p, q
+poptG, pcov = scipy.optimize.curve_fit(ExpPBothBiBi, XforFit, YforFit, bounds = FitBounds)
+
+# fit_alphaG = poptG[0]
+# alphaG_error = np.round(np.sqrt(np.diag(pcov))[0],1)
+# fitYG = fractionTransformed(FitX, fit_alphaG)
+# fitY_contG = fractionTransformed(xForFit_cont, fit_alphaG)    
+
+#%%
+dataX1 = BiBiOnlyData1['ObsPBoth']
+dataY1 = BiBiOnlyData1['expBoth']
+p=0.75
+q=0.35
+alpha=70
+fitY1 = ExpPBothBiBi(BiBiOnlyData1['OD'], alpha, p, q)
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(dataX1,dataY1,'ro')
+plt.plot(dataX1,fitY1,'ko')
+plt.xscale('log')
+plt.yscale('log')
+
+
+
+
+
+
+
+
+
+# for i, od in enumerate(ODvals):
+#     Prob_both_per_k = np.zeros(len(Kvals))
+#     Prob_pVS1_per_k = np.zeros(len(Kvals))
+#     Prob_BBR1_per_k = np.zeros(len(Kvals))
+#     for j, k in enumerate(Kvals): # number of agro-plant cell contacts
+#         PofK = Poisson_of_k(alpha,od,k) # calculate the Poisson probability of k = 1, 2, 3...contacts
+
+#         prob_of_at_least_one_pVS1 = (1-q**k)
+#         prob_of_at_least_one_BBR1 = (1-s**k)
+        
+#         Prob_pVS1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_pVS1
+#         Prob_BBR1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_BBR1
+        
+#         prob_of_both = PofK * prob_of_at_least_one_pVS1 * prob_of_at_least_one_BBR1
+        
+#         Prob_both_per_k[j] = prob_of_both      
+
+#%%
+def BiBi_probabilities(ODs,alpha,p,r):
+    Probs_both_per_OD = np.zeros(len(ODs)) #prob of detecting at least one of each
+    Probs_pVS1_per_OD = np.zeros(len(ODs)) #prob of detecting at least one pVS1
+    Probs_BBR1_per_OD = np.zeros(len(ODs)) #prob of detecting at least one BBR1
+    Probs_BBR1_given_pVS1_perOD = np.zeros(len(ODs))
+    Probs_pVS1_given_BBR11_perOD = np.zeros(len(ODs))
+    for i, od in enumerate(ODs):
+        Prob_both_per_k = np.zeros(len(Kvals))
+        Prob_pVS1_per_k = np.zeros(len(Kvals))
+        Prob_BBR1_per_k = np.zeros(len(Kvals))
+        for j, k in enumerate(Kvals): # number of agro-plant cell contacts
+            PofK = Poisson_of_k(alpha,od,k) # calculate the Poisson probability of k = 1, 2, 3...contacts
+    
+            prob_of_at_least_one_pVS1 = 1-((1-p)**k)
+            prob_of_at_least_one_BBR1 = 1-((1-r)**k)
+            
+            Prob_pVS1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_pVS1
+            Prob_BBR1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_BBR1
+            
+            prob_of_both = PofK * prob_of_at_least_one_pVS1 * prob_of_at_least_one_BBR1
+            
+            Prob_both_per_k[j] = prob_of_both      
+            
+        Probs_both_per_OD[i] = np.sum(Prob_both_per_k)
+        Probs_pVS1_per_OD[i] = np.sum(Prob_pVS1_per_k)
+        Probs_BBR1_per_OD[i] = np.sum(Prob_BBR1_per_k)
+        Probs_BBR1_given_pVS1_perOD[i] = np.sum(Prob_both_per_k)/np.sum(Prob_BBR1_per_k)
+        Probs_pVS1_given_BBR11_perOD[i] = np.sum(Prob_both_per_k)/np.sum(Prob_pVS1_per_k)
+        
+    return np.concatenate((Probs_both_per_OD,Probs_BBR1_given_pVS1_perOD,Probs_pVS1_given_BBR11_perOD,Probs_pVS1_per_OD,Probs_BBR1_per_OD))
+
+def wrapperFunc(ODs,alpha,p,r):
+    OD1 = ODs[0:len(XforFit1)]
+    OD2 = ODs[len(XforFit1):len(ODs)]
+    return np.concatenate((BiBi_probabilities(OD1,alpha,p,r),BiBi_probabilities(OD2,alpha,p,r)))
+
+
+alpha = 70
+p = 0.75
+r = 0.35
+#[fitPboth,fitPpVS1,fitpBBR1] = BiBi_probabilities(BiBiOnlyData1['OD'],alpha,p,r)
+
+BiBiOnlyData1 = BiBiOnlyData1.dropna()
+BiBiOnlyData2 = BiBiOnlyData2.dropna()
+
+
+XforFit1 = BiBiOnlyData1['OD']
+XforFit2 = BiBiOnlyData2['OD']
+# order = obsPboth, BBR1 given pVS1, pVS1 given BBR1
+YforFit1 = np.concatenate((np.array(BiBiOnlyData1['ObsPBoth']),np.array(BiBiOnlyData1['RedGivenGreen']),np.array(BiBiOnlyData1['GreenGivenRed']),np.array(BiBiOnlyData1['fracGFP']),np.array(BiBiOnlyData1['fracRFP'])))
+YforFit2 = np.concatenate((np.array(BiBiOnlyData2['ObsPBoth']),np.array(BiBiOnlyData2['GreenGivenRed']),np.array(BiBiOnlyData2['RedGivenGreen']),np.array(BiBiOnlyData2['fracRFP']),np.array(BiBiOnlyData2['fracGFP'])))
+
+XforFit = np.concatenate((XforFit1,XforFit2))
+YforFit = np.concatenate((YforFit1,YforFit2))
+nanfilter = np.isnan(YforFit)
+
+
+FitBounds = ((40,0.2,0.2),(100,1,1)) #alpha, p, q
+poptG, pcov = scipy.optimize.curve_fit(wrapperFunc, XforFit, YforFit, bounds = FitBounds)
+
+
+fitalpha = poptG[0]
+alpha_error = np.round(np.sqrt(np.diag(pcov))[0],1)
+fitr = poptG[1]
+r_error = np.round(np.sqrt(np.diag(pcov))[1],2)
+fitp = poptG[2]
+p_error = np.round(np.sqrt(np.diag(pcov))[2],3)
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(YforFit,wrapperFunc(XforFit,fitalpha,fitr,fitp),'o',ms=3)
+plt.plot(YforFit,YforFit,'k-')
+plt.ylabel('fit')
+plt.xlabel('data')
+
+
+Rsqrd = getRsquared(wrapperFunc(XforFit,fitalpha,fitr,fitp),YforFit)
+print(Rsqrd)
+
+
+#%%
+
+def BiBi_probabilities(ODs,fitalpha,fitp,fitr):
+    Probs_both_per_OD = np.zeros(len(ODs)) #prob of detecting at least one of each
+    Probs_pVS1_per_OD = np.zeros(len(ODs)) #prob of detecting at least one pVS1
+    Probs_BBR1_per_OD = np.zeros(len(ODs)) #prob of detecting at least one BBR1
+    Probs_BBR1_given_pVS1_perOD = np.zeros(len(ODs))
+    Probs_pVS1_given_BBR11_perOD = np.zeros(len(ODs))
+    for i, od in enumerate(ODs):
+        Prob_both_per_k = np.zeros(len(Kvals))
+        Prob_pVS1_per_k = np.zeros(len(Kvals))
+        Prob_BBR1_per_k = np.zeros(len(Kvals))
+        for j, k in enumerate(Kvals): # number of agro-plant cell contacts
+            PofK = Poisson_of_k(alpha,od,k) # calculate the Poisson probability of k = 1, 2, 3...contacts
+    
+            prob_of_at_least_one_pVS1 = 1-((1-p)**k)
+            prob_of_at_least_one_BBR1 = 1-((1-r)**k)
+            
+            Prob_pVS1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_pVS1
+            Prob_BBR1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_BBR1
+            
+            prob_of_both = PofK * prob_of_at_least_one_pVS1 * prob_of_at_least_one_BBR1
+            
+            Prob_both_per_k[j] = prob_of_both      
+            
+        Probs_both_per_OD[i] = np.sum(Prob_both_per_k)
+        Probs_pVS1_per_OD[i] = np.sum(Prob_pVS1_per_k)
+        Probs_BBR1_per_OD[i] = np.sum(Prob_BBR1_per_k)
+        Probs_BBR1_given_pVS1_perOD[i] = np.sum(Prob_both_per_k)/np.sum(Prob_BBR1_per_k)
+        Probs_pVS1_given_BBR11_perOD[i] = np.sum(Prob_both_per_k)/np.sum(Prob_pVS1_per_k)
+        
+    return [Probs_both_per_OD,Probs_BBR1_given_pVS1_perOD,Probs_pVS1_given_BBR11_perOD,Probs_pVS1_per_OD,Probs_BBR1_per_OD]
+
+
+ODvalsForFit = np.logspace(-3,-0.2)
+
+[dummy,dummy,dummy,Probs_pVS1_per_OD,Probs_BBR1_per_OD] = BiBi_probabilities(ODvalsForFit,alpha,p,r)
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(np.log10(ODvalsForFit),Probs_pVS1_per_OD,'k-')
+plt.plot(np.log10(ODvalsForFit),Probs_BBR1_per_OD,'r-')
+# plt.errorbar(np.log10(meanBiBi_656_614.index), meanBiBi_656_614['fracGFP'], errorBiBi_656_614['fracGFP'],ls='none',marker='s',mfc='limegreen',mec='k',color='limegreen', ms=5)
+# plt.errorbar(np.log10(meanBiBi_654_514.index), meanBiBi_654_514['fracGFP'], errorBiBi_654_514['fracGFP'],ls='none',marker='D',mfc='w',mec='limegreen',color='limegreen', ms=5)
+# plt.errorbar(np.log10(meanBiBi_654_514.index), meanBiBi_654_514['fracRFP'], errorBiBi_654_514['fracRFP'],ls='none',marker='s',mfc='mediumorchid',mec='k',color='mediumorchid', ms=5)
+# plt.errorbar(np.log10(meanBiBi_656_614.index), meanBiBi_656_614['fracRFP'], errorBiBi_656_614['fracRFP'],ls='none',marker='D',mfc='w',mec='mediumorchid',color='mediumorchid', ms=5)
+plt.errorbar(np.log10(meanBiBi_656_614.index), meanBiBi_656_614['fracGFP'], errorBiBi_656_614['fracGFP'],ls='none',marker='s',mfc='b',mec='k',color='b', ms=5)
+plt.errorbar(np.log10(MeanPerDilution.index), MeanPerDilution['fracGFP'], SDPerDilution['fracGFP'],ls='none',marker='>',mfc='orange',mec='k',color='orange', ms=5)
+plt.errorbar(np.log10(meanBiBi_654_514.index), meanBiBi_654_514['fracGFP'], errorBiBi_654_514['fracGFP'],ls='none',marker='D',mfc='r',mec='k',color='r', ms=5)
+plt.errorbar(np.log10(meanMix_654_514.index), meanMix_654_514['fracGFP'], errorMix_654_514['fracGFP'],ls='none',marker='<',mfc='c',mec='k',color='c', ms=5)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+plt.legend(['fit','fit','GFP from BiBi (pVS1 Kan)','GFP from Bi (pVS1 Kan)','GFP from BiBi (BBR1 Spec)','GFP from Bi (BBR1 Spec)'],
+           title = 'mean $\pm$ SEM',bbox_to_anchor =(1.05, 1))
+plt.ylabel('fraction GFP')
+
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.grid('major')
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(np.log10(ODvalsForFit),Probs_pVS1_per_OD,'k-')
+plt.plot(np.log10(ODvalsForFit),Probs_BBR1_per_OD,'r-')
+plt.errorbar(np.log10(meanBiBi_654_514.index), meanBiBi_654_514['fracRFP'], errorBiBi_654_514['fracRFP'],ls='none',marker='s',mfc='b',mec='k',color='b', ms=5)
+plt.errorbar(np.log10(MeanPerDilution.index), MeanPerDilution['fracRFP'], SDPerDilution['fracRFP'],ls='none',marker='>',mfc='orange',mec='k',color='orange', ms=5)
+plt.errorbar(np.log10(meanBiBi_656_614.index), meanBiBi_656_614['fracRFP'], errorBiBi_656_614['fracRFP'],ls='none',marker='D',mfc='r',mec='k',color='r', ms=5)
+plt.errorbar(np.log10(meanMix_656_614.index), meanMix_656_614['fracRFP'], errorMix_656_614['fracRFP'],ls='none',marker='<',mfc='c',mec='k',color='c', ms=5)
+
+plt.errorbar(np.log10(meanBiBi_656_614.index), meanBiBi_656_614['fracGFP'], errorBiBi_656_614['fracGFP'],ls='none',marker='s',mfc='w',mec='b',color='b', ms=5)
+plt.errorbar(np.log10(MeanPerDilution.index), MeanPerDilution['fracGFP'], SDPerDilution['fracGFP'],ls='none',marker='>',mfc='w',mec='orange',color='orange', ms=5)
+plt.errorbar(np.log10(meanBiBi_654_514.index), meanBiBi_654_514['fracGFP'], errorBiBi_654_514['fracGFP'],ls='none',marker='D',mfc='w',mec='r',color='r', ms=5)
+plt.errorbar(np.log10(meanMix_654_514.index), meanMix_654_514['fracGFP'], errorMix_654_514['fracGFP'],ls='none',marker='<',mfc='w',mec='c',color='c', ms=5)
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.grid('major')
+plt.xlabel ('$log_{10}$ OD of labeled strain')
+plt.ylabel('fraction of cells transformed')
+plt.legend(['fit','fit','RFP from BiBi (pVS1 Kan)','RFP from Bi (pVS1 Kan)','RFP from BiBi (BBR1 Spec)',
+           'RFP from Bi (BBR1 Spec)','GFP from BiBi (pVS1 Kan)','GFP from Bi (pVS1 Kan)','GFP from BiBi (BBR1 Spec)','GFP from Bi (BBR1 Spec)'],
+           title = 'mean $\pm$ SEM',bbox_to_anchor =(1.05, 1))
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(np.log10(ODvalsForFit),Probs_pVS1_per_OD,'k-')
+plt.plot(np.log10(ODvalsForFit),Probs_BBR1_per_OD,'r-')
+plt.errorbar(np.log10(meanBiBi_654_514.index), meanBiBi_654_514['fracRFP'], errorBiBi_654_514['fracRFP'],ls='none',marker='s',mfc='b',mec='k',color='b', ms=5)
+plt.errorbar(np.log10(MeanPerDilution.index), MeanPerDilution['fracRFP'], SDPerDilution['fracRFP'],ls='none',marker='>',mfc='orange',mec='k',color='orange', ms=5)
+plt.errorbar(np.log10(meanBiBi_656_614.index), meanBiBi_656_614['fracRFP'], errorBiBi_656_614['fracRFP'],ls='none',marker='D',mfc='r',mec='k',color='r', ms=5)
+plt.errorbar(np.log10(meanMix_656_614.index), meanMix_656_614['fracRFP'], errorMix_656_614['fracRFP'],ls='none',marker='<',mfc='c',mec='k',color='c', ms=5)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.grid('major')
+plt.xlabel ('$log_{10}$ OD of labeled strain')
+plt.ylabel('fraction of cells transformed')
+plt.legend(['fit','fit','RFP from BiBi (pVS1 Kan)','RFP from Bi (pVS1 Kan)','RFP from BiBi (BBR1 Spec)',
+           'RFP from Bi (BBR1 Spec)'],
+           title = 'mean $\pm$ SEM',bbox_to_anchor =(1.05, 1))
+#%%
+def BiBi_probabilities(ODs,alpha,p,r):
+    Probs_both_per_OD = np.zeros(len(ODs)) #prob of detecting at least one of each
+    Probs_pVS1_per_OD = np.zeros(len(ODs)) #prob of detecting at least one pVS1
+    Probs_BBR1_per_OD = np.zeros(len(ODs)) #prob of detecting at least one BBR1
+    Probs_BBR1_given_pVS1_perOD = np.zeros(len(ODs))
+    Probs_pVS1_given_BBR11_perOD = np.zeros(len(ODs))
+    for i, od in enumerate(ODs):
+        Prob_both_per_k = np.zeros(len(Kvals))
+        Prob_pVS1_per_k = np.zeros(len(Kvals))
+        Prob_BBR1_per_k = np.zeros(len(Kvals))
+        for j, k in enumerate(Kvals): # number of agro-plant cell contacts
+            PofK = Poisson_of_k(alpha,od,k) # calculate the Poisson probability of k = 1, 2, 3...contacts
+    
+            prob_of_at_least_one_pVS1 = 1-((1-p)**k)
+            prob_of_at_least_one_BBR1 = 1-((1-r)**k)
+            
+            Prob_pVS1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_pVS1
+            Prob_BBR1_per_k[j] = Poisson_of_k(alpha,od,k) * prob_of_at_least_one_BBR1
+            
+            prob_of_both = PofK * prob_of_at_least_one_pVS1 * prob_of_at_least_one_BBR1
+            
+            Prob_both_per_k[j] = prob_of_both      
+            
+        Probs_both_per_OD[i] = np.sum(Prob_both_per_k)
+        Probs_pVS1_per_OD[i] = np.sum(Prob_pVS1_per_k)
+        Probs_BBR1_per_OD[i] = np.sum(Prob_BBR1_per_k)
+        Probs_BBR1_given_pVS1_perOD[i] = np.sum(Prob_both_per_k)/np.sum(Prob_BBR1_per_k)
+        Probs_pVS1_given_BBR11_perOD[i] = np.sum(Prob_both_per_k)/np.sum(Prob_pVS1_per_k)
+        
+    return np.concatenate((Probs_both_per_OD,Probs_BBR1_given_pVS1_perOD,Probs_pVS1_given_BBR11_perOD))
+
+def wrapperFunc(ODs,alpha,p,r):
+    OD1 = ODs[0:len(XforFit1)]
+    OD2 = ODs[len(XforFit1):len(ODs)]
+    return np.concatenate((BiBi_probabilities(OD1,alpha,p,r),BiBi_probabilities(OD2,alpha,p,r)))
+
+
+alpha = 70
+p = 0.75
+r = 0.35
+#[fitPboth,fitPpVS1,fitpBBR1] = BiBi_probabilities(BiBiOnlyData1['OD'],alpha,p,r)
+
+BiBiOnlyData1 = BiBiOnlyData1.dropna()
+BiBiOnlyData2 = BiBiOnlyData2.dropna()
+
+
+XforFit1 = BiBiOnlyData1['OD']
+XforFit2 = BiBiOnlyData2['OD']
+# order = obsPboth, BBR1 given pVS1, pVS1 given BBR1
+YforFit1 = np.concatenate((np.array(BiBiOnlyData1['ObsPBoth']),np.array(BiBiOnlyData1['RedGivenGreen']),np.array(BiBiOnlyData1['GreenGivenRed'])))
+YforFit2 = np.concatenate((np.array(BiBiOnlyData2['ObsPBoth']),np.array(BiBiOnlyData2['GreenGivenRed']),np.array(BiBiOnlyData2['RedGivenGreen'])))
+
+XforFit = np.concatenate((XforFit1,XforFit2))
+YforFit = np.concatenate((YforFit1,YforFit2))
+nanfilter = np.isnan(YforFit)
+
+
+FitBounds = ((0,0.2,0.2),(100,1,1)) #alpha, p, q
+poptG, pcov = scipy.optimize.curve_fit(wrapperFunc, XforFit, YforFit, bounds = FitBounds)
+
+
+fitalpha = poptG[0]
+alpha_error = np.round(np.sqrt(np.diag(pcov))[0],1)
+print('alpha = ' + str(np.round(fitalpha,2)) + ' pm' + str(np.round(alpha_error,2)))
+
+
+fitr = poptG[1]
+r_error = np.round(np.sqrt(np.diag(pcov))[1],2)
+print('r = ' + str(np.round(fitr,2)) + ' pm ' + str(np.round(r_error,2)))
+
+
+fitp = poptG[2]
+p_error = np.round(np.sqrt(np.diag(pcov))[2],3)
+print('p = ' + str(np.round(fitp,2)) + ' pm ' + str(np.round(p_error,2)))
+
+
+plt.plot(wrapperFunc(XforFit,fitalpha,fitr,fitp),YforFit,'o')
+
+Rsqrd = getRsquared(wrapperFunc(XforFit,fitalpha,fitr,fitp),YforFit)
+print('R squared = ' + str(np.round(Rsqrd,2)))
+

@@ -1,0 +1,870 @@
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+# to enable LaTeX in labels
+mpl.rcParams['text.usetex'] = True
+mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
+
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+import scipy as scipy
+from scipy import optimize
+from scipy.stats import iqr
+
+# this is to set up the figure style
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+
+#%% load the data
+
+# load the experiment_database spreadsheet
+print('navigate to the folder where the experiment database file is stored - then select any file')
+file_path = filedialog.askopenfilename() # store the file path as a string
+lastFileSep = file_path.rfind(filesep) # find the position of the last path separator
+folderpath = file_path[0:lastFileSep] # get the part of the path corresponding to the folder where the chosen file was located
+experiment_database_filePath = folderpath + filesep + 'experiment_database.csv'
+experiment_database = pd.read_csv(experiment_database_filePath)
+
+# select which experiments to aggregate. Refer to 'experiment_database' spreadsheet for more info
+experimentIDs = ['7','8','10','11','13','15','16']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+BiBi_exp_database = experiment_database[condition]
+
+#initialize a dataframe to store values
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+BiBidata = pd.DataFrame([], columns=cols)
+
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in BiBi_exp_database['Experiment_ID'].values:
+    thisExperiment = BiBi_exp_database[BiBi_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    BiBidata = pd.concat([BiBidata,expCountsData])
+
+# convert the counts to int64
+BiBidata = BiBidata.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+
+
+
+#%% now select the 'non-BiBi' experiments in case we want to compare them to BiBi data
+fractionTransformable = 0.5 # fraction of all nuclei that can get transformed
+experimentIDs = ['2','5']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+ODdilution_exp_database = experiment_database[condition]
+#initialize a dataframe to store values
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+ODdata = pd.DataFrame([], columns=cols)
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in ODdilution_exp_database['Experiment_ID'].values:
+    thisExperiment = ODdilution_exp_database[ODdilution_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    ODdata = pd.concat([ODdata,expCountsData])
+# convert the counts to int64
+ODdata = ODdata.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+ODdata['ODoneStrain'] = ODdata['OD']/2
+ODdata['fracGFP'] = ODdata['NGFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracGFP'].loc[ODdata['fracGFP']>1]=1
+ODdata['fracRFP'] = ODdata['NRFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracRFP'].loc[ODdata['fracRFP']>1]=1
+ODdata['NotGFP'] = 1 - ODdata['fracGFP']
+ODdata['NotRFP'] = 1 - ODdata['fracRFP']
+# calculate the means and erors for plotting
+MeanPerDilution = ODdata.groupby(by=["ODoneStrain"]).mean()
+SDPerDilution = ODdata.groupby(by=["ODoneStrain"]).sem()
+NotGFPMeanPerOD = MeanPerDilution['NotGFP']
+NotRFPMeanPerOD = MeanPerDilution['NotRFP']
+NotGFPSDPerOD = SDPerDilution['NotGFP']
+NotRFPSDPerOD = SDPerDilution['NotRFP']
+ODvals = MeanPerDilution.index
+
+#%% calculate stuff for plotting
+
+fractionTransformable = 0.5 # fraction of all nuclei that can get transformed
+
+BiBidata['fracGFP'] = BiBidata['NGFP']/(BiBidata['NBFP']*fractionTransformable)
+BiBidata['fracGFP'].loc[BiBidata['fracGFP']>1]=1
+BiBidata['fracRFP'] = BiBidata['NRFP']/(BiBidata['NBFP']*fractionTransformable)
+BiBidata['fracRFP'].loc[BiBidata['fracRFP']>1]=1
+BiBidata['ObsPBoth'] = BiBidata['NBoth']/(BiBidata['NBFP']*fractionTransformable)
+BiBidata['ObsPBoth'].loc[BiBidata['ObsPBoth']>1]=1
+
+BiBidata['fracEither'] = (BiBidata['fracRFP'] + BiBidata['fracGFP']) - BiBidata['ObsPBoth']
+BiBidata['NotGFP'] = 1 - BiBidata['fracGFP']
+BiBidata['NotRFP'] = 1 - BiBidata['fracRFP']
+BiBidata['NotBoth'] = 1 - BiBidata['ObsPBoth']
+BiBidata['fracGFPOnly'] = BiBidata['fracGFP'] - BiBidata['ObsPBoth']
+BiBidata['fracRFPOnly'] = BiBidata['fracRFP'] - BiBidata['ObsPBoth']
+BiBidata['fracGFP2'] = BiBidata['fracGFP']/BiBidata['fracEither'] # prob of FFP given that cell was transformed
+BiBidata['fracRFP2'] = BiBidata['fracRFP']/BiBidata['fracEither'] # prob of RFP given that cell was transformed
+
+
+
+BiBi_656_614_data = BiBidata[BiBidata['filename'].str.contains('BiBi656')]
+BiBi_656_614_data['ODoneStrain'] = BiBi_656_614_data['OD']
+
+Mix_656_614_data = BiBidata[BiBidata['filename'].str.contains('sep656')]
+Mix_656_614_data['ODoneStrain'] = Mix_656_614_data['OD']/2
+
+BiBi_654_514_data = BiBidata[BiBidata['filename'].str.contains('BiBi654')]
+BiBi_654_514_data['ODoneStrain'] = BiBi_654_514_data['OD']
+
+Mix_654_514_data = BiBidata[BiBidata['filename'].str.contains('sep654')]
+Mix_654_514_data['ODoneStrain'] = Mix_654_514_data['OD']/2
+
+meanBiBi_656_614 = BiBi_656_614_data.groupby('ODoneStrain').mean()
+errorBiBi_656_614 = BiBi_656_614_data.groupby('ODoneStrain').sem()
+
+meanMix_656_614 = Mix_656_614_data.groupby('ODoneStrain').mean()
+errorMix_656_614 = Mix_656_614_data.groupby('ODoneStrain').sem()
+
+meanBiBi_654_514 = BiBi_654_514_data.groupby('ODoneStrain').mean()
+errorBiBi_654_514 = BiBi_654_514_data.groupby('ODoneStrain').sem()
+
+meanMix_654_514 = Mix_654_514_data.groupby('ODoneStrain').mean()
+errorMix_654_514 = Mix_654_514_data.groupby('ODoneStrain').sem()
+
+#%% plots for GFP pVS1 Kan (614) ; RFP BBR1 Spec (656) (656_614)
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+ODvals = meanBiBi_656_614.index
+#sns.scatterplot(data=BiBiData, x="OD", y="NotGFP",marker='o',color='limegreen',alpha = 0.6,s=60)
+plt.errorbar(np.log10(ODvals), meanBiBi_656_614['NotGFP'], errorBiBi_656_614['NotGFP'],ls='none',marker='o',mfc='limegreen',mec='k',color='k', ms=5)
+#sns.scatterplot(data=BiBiData, x="OD", y="NotRFP",marker='^',color='orchid',alpha = 0.6,s=60)
+plt.errorbar(np.log10(ODvals), meanBiBi_656_614['NotRFP'], errorBiBi_656_614['NotRFP'],ls='none',marker='^',mfc='orchid',mec='k',color='k', ms=6)
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.ylim(-0.1,1.1)#np.min(FitYG)*0.1
+#plt.xlim(0.001,0.5)
+plt.grid()
+#plt.xscale('log')
+plt.xlabel ('$log_{10}$ OD BiBi strain')
+plt.ylabel('fraction of untransformed \n transformable cells')
+plt.legend(['GFP (pVS1 Kan)','RFP (BBR1 Spec)'],title = 'mean $\pm$ SEM',bbox_to_anchor =(2.05, 1))
+plt.title('BiBi strain \n total OD constant 0.5')
+plt.show()
+
+
+#%% plot GFP pVS1 Kan from BiBi (614) vs GFP pVS1 Kan single binary vector strain (614 Bi)
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="NotGFP",marker='o',color='limegreen',alpha = 0.6,s=60)
+plt.errorbar(np.log10(meanBiBi_656_614.index), meanBiBi_656_614['NotGFP'], errorBiBi_656_614['NotGFP'],ls='none',marker='s',mfc='g',mec='k',color='k', ms=5)
+plt.errorbar(np.log10(MeanPerDilution.index), MeanPerDilution['NotGFP'], SDPerDilution['NotGFP'],ls='none',marker='o',mfc='turquoise',mec='k',color='k', ms=5)
+
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.ylim(-0.1,1.1)#np.min(FitYG)*0.1
+#plt.xlim(0.001,0.5)
+plt.grid()
+#plt.xscale('log')
+plt.xlabel ('$log_{10}$ OD of labeled strain')
+plt.ylabel('fraction of untransformed \n transformable cells')
+plt.legend(['GFP from BiBi (pVS1 Kan)','GFP from Bi (pVS1 Kan)'],title = 'mean $\pm$ SEM',bbox_to_anchor =(2.35, 1))
+plt.title('GFP (pVS1 Kan) \n launched from different strains \n total OD constant 0.5')
+plt.show()
+
+#%% plot GFP pVS1 Kan from BiBi (614), GFP BBR1 Kan from BiBi (654),  
+# GFP pVS1 Kan single binary vector strain (614 Bi), and GFP BBR1 Spec single binary vector strain (654 Bi)
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="NotGFP",marker='o',color='limegreen',alpha = 0.6,s=60)
+plt.errorbar(np.log10(meanBiBi_656_614.index), meanBiBi_656_614['NotGFP'], errorBiBi_656_614['NotGFP'],ls='none',marker='s',mfc='cornflowerblue',mec='k',color='k', ms=5)
+plt.errorbar(np.log10(MeanPerDilution.index), MeanPerDilution['NotGFP'], SDPerDilution['NotGFP'],ls='none',marker='o',mfc='lightsalmon',mec='k',color='k', ms=5)
+plt.errorbar(np.log10(meanBiBi_654_514.index), meanBiBi_654_514['NotGFP'], errorBiBi_654_514['NotGFP'],ls='none',marker='^',mfc='mediumorchid',mec='k',color='k', ms=5)
+plt.errorbar(np.log10(meanMix_654_514.index), meanMix_654_514['NotGFP'], errorMix_654_514['NotGFP'],ls='none',marker='<',mfc='limegreen',mec='k',color='k', ms=5)
+
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.ylim(-0.1,1.1)#np.min(FitYG)*0.1
+#plt.xlim(0.001,0.5)
+plt.grid()
+#plt.xscale('log')
+plt.xlabel ('$log_{10}$ OD of labeled strain')
+plt.ylabel('fraction of untransformed \n transformable cells')
+plt.legend(['GFP from BiBi (pVS1 Kan)','GFP from Bi (pVS1 Kan)','GFP from BiBi (BBR1 Spec)','GFP from Bi (BBR1 Spec)'],title = 'mean $\pm$ SEM',bbox_to_anchor =(2.35, 1))
+plt.title('GFP \n launched from different strains/plasmids \n total OD constant 0.5')
+plt.show()
+
+
+#%% plot RFP pVS1 Kan from BiBi (514), RFP BBR1 Kan from BiBi (656),  
+# RFP pVS1 Kan single binary vector strain (514 Bi), and RFP BBR1 Spec single binary vector strain (656 Bi)
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="NotGFP",marker='o',color='limegreen',alpha = 0.6,s=60)
+plt.errorbar(np.log10(meanBiBi_654_514.index), meanBiBi_654_514['NotRFP'], errorBiBi_654_514['NotRFP'],ls='none',marker='s',mfc='cornflowerblue',mec='k',color='k', ms=5)
+plt.errorbar(np.log10(MeanPerDilution.index), MeanPerDilution['NotRFP'], SDPerDilution['NotRFP'],ls='none',marker='o',mfc='lightsalmon',mec='k',color='k', ms=5)
+plt.errorbar(np.log10(meanBiBi_656_614.index), meanBiBi_656_614['NotRFP'], errorBiBi_656_614['NotRFP'],ls='none',marker='^',mfc='mediumorchid',mec='k',color='k', ms=5)
+plt.errorbar(np.log10(meanMix_656_614.index), meanMix_656_614['NotRFP'], errorMix_656_614['NotRFP'],ls='none',marker='<',mfc='limegreen',mec='k',color='k', ms=5)
+
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.ylim(-0.1,1.1)#np.min(FitYG)*0.1
+#plt.xlim(0.001,0.5)
+plt.grid()
+#plt.xscale('log')
+plt.xlabel ('$log_{10}$ OD of labeled strain')
+plt.ylabel('fraction of untransformed \n transformable cells')
+plt.legend(['RFP from BiBi (pVS1 Kan)','RFP from Bi (pVS1 Kan)','RFP from BiBi (BBR1 Spec)','RFP from Bi (BBR1 Spec)'],title = 'mean $\pm$ SEM',bbox_to_anchor =(2.35, 1))
+plt.title('RFP \n launched from different strains/plasmids \n total OD constant 0.5')
+plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#%%
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="ObsPBoth",marker='o',color='blue',alpha = 0.3,s=60)
+plt.errorbar(meanBiBiData.index, meanBiBiData['ObsPBoth'], sdBiBiData['ObsPBoth'],ls='none',marker='s',mfc='royalblue',mec='k',color='k', ms=5,capsize=3.5)
+#sns.scatterplot(data=MixData, x="OD", y="ObsPBoth",marker='^',color='red',alpha = 0.3,s=60)
+plt.errorbar(meanMixData.index, meanMixData['ObsPBoth'], sdMixData['ObsPBoth'],ls='none',marker='v',mfc='yellow',mec='k',color='k', ms=6,capsize=3.5)
+#plt.plot(meanBiBiData.index,meanBiBiData['ObsPBoth']*0.1,'r-')
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+#plt.ylim(-0.1,1.1)#np.min(FitYG)*0.1
+plt.xlim(0.001,1)
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel ('OD of labeled strains')
+plt.ylabel('fraction of cells \n expressing both GFP and RFP')
+plt.legend(['BiBi','mix'],title = 'mean $\pm$ sd across plants',bbox_to_anchor =(2.1,1.1))
+plt.title('mix+BiBi data from 10/23/23 + BiBi from 11/20/23 \n RFP pVS1 Kan ; GFP BBR1 Spec \n total OD constant 0.5')
+
+#%%
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="ObsPBoth",marker='o',color='blue',alpha = 0.3,s=60)
+plt.errorbar(meanBiBiData.index, meanBiBiData['fracGFP'], sdBiBiData['fracGFP'],ls='none',marker='s',mfc='royalblue',mec='k',color='k', ms=5,capsize=3.5)
+#sns.scatterplot(data=MixData, x="OD", y="ObsPBoth",marker='^',color='red',alpha = 0.3,s=60)
+plt.errorbar(meanMixData.index/2, meanMixData['fracGFP'], sdMixData['fracGFP'],ls='none',marker='^',mfc='yellow',mec='k',color='k', ms=6,capsize=3.5)
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel ('OD of GFP strain or BiBi strain')
+plt.ylabel('fraction of cells \n expressing GFP')
+plt.legend(['BiBi','mix'],title = 'mean $\pm$ sd across plants',bbox_to_anchor =(1, 1.04))
+plt.title('mix data from 10/23/23 + BiBi from 11/20/23 \n RFP pVS1 Kan ; GFP BBR1 Spec \n total OD constant 0.5')
+
+#%%
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="ObsPBoth",marker='o',color='blue',alpha = 0.3,s=60)
+plt.errorbar(meanBiBiData.index, meanBiBiData['fracRFP'], sdBiBiData['fracRFP'],ls='none',marker='s',mfc='royalblue',mec='k',color='k', ms=5,capsize=3.5)
+#sns.scatterplot(data=MixData, x="OD", y="ObsPBoth",marker='^',color='red',alpha = 0.3,s=60)
+plt.errorbar(meanMixData.index/2, meanMixData['fracRFP'], sdMixData['fracRFP'],ls='none',marker='^',mfc='yellow',mec='k',color='k', ms=6,capsize=3.5)
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel ('OD of RFP strain or BiBi strain')
+plt.ylabel('fraction of cells \n expressing RFP')
+plt.legend(['BiBi','mix'],title = 'mean $\pm$ sd across plants',bbox_to_anchor =(1, 1.04))
+plt.title('mix data from 10/23/23 + BiBi from 11/20/23 \n RFP pVS1 Kan ; GFP BBR1 Spec \n total OD constant 0.5')
+
+
+#%%
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="ObsPBoth",marker='o',color='blue',alpha = 0.3,s=60)
+plt.errorbar(meanBiBiData.index, meanBiBiData['ObsPBoth'], sdBiBiData['ObsPBoth'],ls='none',marker='s',mfc='royalblue',mec='k',color='k', ms=6,capsize=3.5)
+plt.errorbar(meanBiBiData.index, meanBiBiData['fracGFP'], sdBiBiData['fracGFP'],ls='none',marker='o',mfc='limegreen',mec='k',color='k', ms=5,capsize=3.5)
+#sns.scatterplot(data=MixData, x="OD", y="ObsPBoth",marker='^',color='red',alpha = 0.3,s=60)
+#plt.errorbar(meanMixData.index, meanMixData['ObsPBoth'], sdMixData['ObsPBoth'],ls='none',marker='^',mfc='salmon',mec='b',color='k', ms=11,capsize=5)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel ('OD of BiBi strain')
+plt.ylabel('fraction of cells')
+plt.legend(['BiBi expressing both','BiBi expressing GFP'],title = 'mean $\pm$ sd across plants', bbox_to_anchor =(1, 1.04))
+plt.title('mix data from 10/23/23 + BiBi from 11/20/23 \n RFP pVS1 Kan ; GFP BBR1 Spec \n total OD constant 0.5')
+plt.show()
+
+#%%
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="ObsPBoth",marker='o',color='blue',alpha = 0.3,s=60)
+plt.errorbar(meanBiBiData.index, meanBiBiData['ObsPBoth'], sdBiBiData['ObsPBoth'],ls='none',marker='s',mfc='royalblue',mec='k',color='k', ms=6,capsize=3.5)
+plt.errorbar(meanBiBiData.index, meanBiBiData['fracRFP'], sdBiBiData['fracRFP'],ls='none',marker='^',mfc='orchid',mec='k',color='k', ms=6,capsize=3.5)
+#sns.scatterplot(data=MixData, x="OD", y="ObsPBoth",marker='^',color='red',alpha = 0.3,s=60)
+#plt.errorbar(meanMixData.index, meanMixData['ObsPBoth'], sdMixData['ObsPBoth'],ls='none',marker='^',mfc='salmon',mec='b',color='k', ms=11,capsize=5)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel ('OD of BiBi strain')
+plt.ylabel('fraction of cells')
+plt.legend(['BiBi expressing both','BiBi expressing RFP'],title = 'mean $\pm$ sd across plants', bbox_to_anchor =(1, 1.04))
+plt.title('mix data from 10/23/23 + BiBi from 11/20/23 \n RFP pVS1 Kan ; GFP BBR1 Spec \n total OD constant 0.5')
+plt.show()
+
+#%% This means that some cells express GFP but not RFP and the opposite is also true, some cells express RFP but not GFP
+# the cells that express GFP but not RFP were contacted by an agro but the RFP plasmid did not get transferred.
+# similarly, a cell expressing RFP but not GFP got contacted by an agro but the GFP plasmid didn't succeed.
+# can we estimate the efficiency of plasmid expression given contact?
+# define 'contact' as the establishment of
+# the probability of transfering the RFP plasmid given contact
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="NotGFP",marker='o',color='limegreen',alpha = 0.6,s=60)
+plt.errorbar(meanBiBiData.index, meanBiBiData['fracGFP2'], sdBiBiData['fracGFP2'],ls='none',marker='o',mfc='limegreen',mec='k',color='k', ms=5,capsize=3.5)
+#sns.scatterplot(data=BiBiData, x="OD", y="NotRFP",marker='^',color='orchid',alpha = 0.6,s=60)
+plt.errorbar(meanBiBiData.index, meanBiBiData['fracRFP2'], sdBiBiData['fracRFP2'],ls='none',marker='^',mfc='orchid',mec='k',color='k', ms=6,capsize=3.5)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xscale('log')
+plt.xlabel ('OD BiBi strain')
+plt.ylabel('fraction of transformed cells \n that are transformed by FP')
+plt.legend(['GFP','RFP'],title = 'mean $\pm$ sd across plants',bbox_to_anchor =(1, 1))
+plt.title('mix data from 10/23/23 + BiBi from 11/20/23 \n BiBi \n GFP pVS1 Kan ; RFP BBR1 Spec \n total OD constant 0.5')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="NotGFP",marker='o',color='limegreen',alpha = 0.6,s=60)
+plt.errorbar(meanBiBiData.index/2, meanMixData['fracGFP2'], sdMixData['fracGFP2'],ls='none',marker='o',mfc='limegreen',mec='k',color='k', ms=5,capsize=3.5)
+#sns.scatterplot(data=BiBiData, x="OD", y="NotRFP",marker='^',color='orchid',alpha = 0.6,s=60)
+plt.errorbar(meanBiBiData.index/2, meanMixData['fracRFP2'], sdMixData['fracRFP2'],ls='none',marker='^',mfc='orchid',mec='k',color='k', ms=6,capsize=3.5)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xscale('log')
+plt.xlabel ('OD of each labeled strain')
+plt.ylabel('fraction of transformed cells \n that are transformed by FP')
+plt.legend(['GFP','RFP'],title = 'mean $\pm$ sd across plants',bbox_to_anchor =(1, 1))
+plt.title('mix data from 10/23/23 + BiBi from 11/20/23 \n Mix \n GFP pVS1 Kan ; RFP BBR1 Spec \n total OD constant 0.5')
+
+
+
+#%% now do the confocal data
+# load stuff
+confocalDataPath1 = '/Volumes/JSALAMOS/lsm710/2023/10-16-23/Max_projections/AllData3.csv'
+confocalData1 = pd.read_csv(confocalDataPath1)
+
+confocalDataPath2 = '/Volumes/JSALAMOS/lsm710/2023/11-20-23/Max_projections/AllData3.csv'
+confocalData2 = pd.read_csv(confocalDataPath2)
+
+confocalData = pd.concat([confocalData1,confocalData2]) # combine them
+
+fractionTransformable = 0.55 # fraction of all nuclei that can get transformed
+
+confocalData['fracGFP'] = confocalData['NRFP']/(confocalData['NBFP']*fractionTransformable) #IMPORTANT!! GFP and RFP channels are swapped
+confocalData['fracGFP'].loc[confocalData['fracGFP']>1]=1
+confocalData['fracRFP'] = confocalData['NGFP']/(confocalData['NBFP']*fractionTransformable)
+confocalData['fracRFP'].loc[confocalData['fracRFP']>1]=1
+confocalData['fracEither'] = (confocalData['fracRFP'] + confocalData['fracGFP']) - confocalData['ObsPBoth']
+confocalData['NotGFP'] = 1 - confocalData['fracGFP']
+confocalData['NotRFP'] = 1 - confocalData['fracRFP']
+confocalData['NotBoth'] = 1 - confocalData['ObsPBoth']
+confocalData['ODoneStrain'] = confocalData['OD']/2
+
+BiBiData_c = confocalData[confocalData['filename'].str.contains('BiBi')]
+MixData_c = confocalData[~ confocalData['filename'].str.contains('BiBi')]
+
+meanBiBiData_c = BiBiData_c.groupby('OD').mean()
+sdBiBiData_c = BiBiData_c.groupby('OD').std()
+meanMixData_c = MixData_c.groupby('OD').mean()
+sdMixData_c = MixData_c.groupby('OD').std()
+
+#%% BiBi cells expressing both and mixed cells expressing both
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="ObsPBoth",marker='o',color='blue',alpha = 0.3,s=60)
+plt.errorbar(meanBiBiData_c.index, meanBiBiData_c['ObsPBoth'], sdBiBiData_c['ObsPBoth'],ls='none',marker='s',mfc='royalblue',mec='k',color='k', ms=5,capsize=3.5)
+#sns.scatterplot(data=MixData, x="OD", y="ObsPBoth",marker='^',color='red',alpha = 0.3,s=60)
+plt.errorbar(meanMixData_c.index, meanMixData_c['ObsPBoth'], sdMixData_c['ObsPBoth'],ls='none',marker='^',mfc='yellow',mec='k',color='k', ms=6,capsize=3.5)
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xscale('log')
+plt.yscale('log')
+#plt.ylim(0,0.2)
+#plt.xlim(0.0015, 0.03)
+plt.xlabel ('OD of labeled strains')
+plt.ylabel('fraction of cells \n expressing both GFP and RFP')
+plt.legend(['BiBi','mix'],title = 'mean $\pm$ sd across plants',bbox_to_anchor =(2.1, 1.04))
+plt.title('GFP pVS1 Kan ; RFP BBR1 Spec \n total OD constant 0.5 \n confocal \n BiBi and Mix 10/23/23 + BiBi 11/20/23')
+
+
+#%% BiBi cells expressing both and BiBi cells expressing RFP
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="ObsPBoth",marker='o',color='blue',alpha = 0.3,s=60)
+plt.errorbar(meanBiBiData_c.index, meanBiBiData_c['ObsPBoth'], sdBiBiData_c['ObsPBoth'],ls='none',marker='s',mfc='royalblue',mec='k',color='k', ms=5,capsize=3.5)
+plt.errorbar(meanBiBiData_c.index, meanBiBiData_c['fracGFP'], sdBiBiData_c['fracGFP'],ls='none',marker='o',mfc='limegreen',mec='k',color='k', ms=5,capsize=3.5)
+#sns.scatterplot(data=MixData, x="OD", y="ObsPBoth",marker='^',color='red',alpha = 0.3,s=60)
+#plt.errorbar(meanMixData.index, meanMixData['ObsPBoth'], sdMixData['ObsPBoth'],ls='none',marker='^',mfc='salmon',mec='b',color='k', ms=11,capsize=5)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel ('OD of BiBi strain')
+plt.ylabel('fraction of cells')
+plt.legend(['BiBi expressing both','BiBi expressing GFP'],title = 'mean $\pm$ sd across plants', bbox_to_anchor =(1, 1.04))
+plt.title('GFP pVS1 Kan ; RFP BBR1 Spec \n total OD constant 0.5 \n confocal BiBi and Mix 10/23/23 + BiBi 11/20/23')
+
+#%% BiBi cells expressing both and BiBi cells expressing RFP
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="ObsPBoth",marker='o',color='blue',alpha = 0.3,s=60)
+plt.errorbar(meanBiBiData_c.index, meanBiBiData_c['ObsPBoth'], sdBiBiData_c['ObsPBoth'],ls='none',marker='s',mfc='royalblue',mec='k',color='k', ms=5,capsize=3.5)
+plt.errorbar(meanBiBiData_c.index, meanBiBiData_c['fracRFP'], sdBiBiData_c['fracRFP'],ls='none',marker='^',mfc='orchid',mec='k',color='k', ms=6,capsize=3.5)
+#sns.scatterplot(data=MixData, x="OD", y="ObsPBoth",marker='^',color='red',alpha = 0.3,s=60)
+#plt.errorbar(meanMixData.index, meanMixData['ObsPBoth'], sdMixData['ObsPBoth'],ls='none',marker='^',mfc='salmon',mec='b',color='k', ms=11,capsize=5)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel ('OD of BiBi strain')
+plt.ylabel('fraction of cells')
+plt.legend(['BiBi expressing both','BiBi expressing RFP'],title = 'mean $\pm$ sd across plants', bbox_to_anchor =(1, 1.04))
+plt.title('GFP pVS1 Kan ; RFP BBR1 Spec \n total OD constant 0.5 \n confocal')
+
+#%% BiBi cells expressing both and BiBi cells expressing RFP
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=BiBiData, x="OD", y="ObsPBoth",marker='o',color='blue',alpha = 0.3,s=60)
+plt.errorbar(meanBiBiData_c.index, meanBiBiData_c['fracGFP'], sdBiBiData_c['fracGFP'],ls='none',marker='o',mfc='limegreen',mec='k',color='k', ms=5,capsize=3.5)
+plt.errorbar(meanBiBiData_c.index, meanBiBiData_c['fracRFP'], sdBiBiData_c['fracRFP'],ls='none',marker='^',mfc='orchid',mec='k',color='k', ms=6,capsize=3.5)
+#sns.scatterplot(data=MixData, x="OD", y="ObsPBoth",marker='^',color='red',alpha = 0.3,s=60)
+#plt.errorbar(meanMixData.index, meanMixData['ObsPBoth'], sdMixData['ObsPBoth'],ls='none',marker='^',mfc='salmon',mec='b',color='k', ms=11,capsize=5)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel ('OD of BiBi strain')
+plt.ylabel('fraction of cells')
+plt.legend(['BiBi expressing GFP','BiBi expressing RFP'],title = 'mean $\pm$ sd across plants', bbox_to_anchor =(1, 1.04))
+plt.title('GFP pVS1 Kan ; RFP BBR1 Spec \n total OD constant 0.5 \n confocal')
+
+#%% fluorescence, mixed strains
+
+fig = plt.figure()
+plt.style.use('ggplot') 
+fig.set_size_inches(4, 4)
+# plot all the data points
+#sns.scatterplot(data=MixData, x="OD", y="meanIntFluoRFP",marker='o',color='orchid',alpha = 0.5,s=60)
+plt.errorbar(meanMixData_c.index, meanMixData_c['meanIntFluoRFP'], sdMixData_c['meanIntFluoRFP'],ls='none',marker='o',mfc='orchid',mec='b',color='k', ms=8,capsize=5)
+plt.errorbar(meanMixData_c.index, meanMixData_c['meanIntFluoGFP'], sdMixData_c['meanIntFluoGFP'],ls='none',marker='o',mfc='limegreen',mec='b',color='k', ms=8,capsize=5)
+
+plt.xscale('log')
+#plt.ylim
+# plt.yscale('log')
+plt.xlabel ('OD of labeled strains')
+plt.ylabel('nucleus fluorescence')
+plt.legend(['SAPS656 RFP-NLS BBR Spec', 'SAPS614 GFP-NLS pVS1 Kan'],title = 'mean $\pm$ sd across plants',bbox_to_anchor =(1, 1.04))
+plt.title('average fluorescence of detected nuclei \n mixed strains')
+
+#%% fluorescence, BiBi 
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=MixData, x="OD", y="meanIntFluoRFP",marker='o',color='orchid',alpha = 0.5,s=60)
+plt.errorbar(meanBiBiData_c.index, meanBiBiData_c['meanIntFluoRFP'], sdBiBiData_c['meanIntFluoRFP'],ls='none',marker='^',mfc='orchid',mec='k',color='k', ms=8,capsize=5)
+plt.errorbar(meanBiBiData_c.index, meanBiBiData_c['meanIntFluoGFP'], sdBiBiData_c['meanIntFluoGFP'],ls='none',marker='o',mfc='limegreen',mec='k',color='k', ms=8,capsize=5)
+
+plt.xscale('log')
+#plt.ylim
+# plt.yscale('log')
+plt.xlabel ('OD of labeled strains')
+plt.ylabel('nucleus fluorescence')
+plt.legend(['SAPS656 RFP-NLS BBR Spec', 'SAPS614 GFP-NLS pVS1 Kan'],title = 'mean $\pm$ sd across plants',bbox_to_anchor =(1, 1.04))
+plt.title('average fluorescence of detected nuclei \n BiBi strain')
+
+
+
+#%% compare confocal with widefield
+
+# remove from widefield data the ODs that I didn't test in confocal
+meanBiBiData = meanBiBiData.reset_index()
+meanBiBiData_c = meanBiBiData_c.reset_index()
+meanBiBiData = meanBiBiData[meanBiBiData['OD'] <= np.max(meanBiBiData_c['OD'])]
+
+meanBiBiData_merged = pd.merge(meanBiBiData, meanBiBiData_c, on = 'OD') # merge widefield (x) and confocal (y)
+# plot and compare
+fig = plt.figure()
+plt.style.use('ggplot') 
+fig.set_size_inches(4, 4)
+plt.plot(meanBiBiData_merged['ObsPBoth_x'],meanBiBiData_merged['ObsPBoth_y'],'ko')
+plt.plot(meanBiBiData_merged['ObsPBoth_x'],meanBiBiData_merged['ObsPBoth_x'],'k-')
+plt.xlabel('Leica widefield')
+plt.ylabel('Zeiss confocal')
+
+
+#%% but I want to compare punch by punch, i.e. image by image
+# ODdataConfocal = pd.read_csv('/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/9-19-23/AllData3_confocal.csv')
+# ODdataConfocal['fracGFPconf'] = ODdataConfocal['NGFP']/ODdataConfocal['NBFP']
+# ODdataConfocal['fracRFPconf'] = ODdataConfocal['NRFP']/ODdataConfocal['NBFP']
+# ODdataConfocal['fracEitherconf'] = (ODdataConfocal['fracRFPconf'] + ODdataConfocal['fracGFPconf']) - ODdataConfocal['ObsPBoth']
+
+# ODdataWideField = pd.read_csv('/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/9-19-23/AllData3.csv')
+# ODdataWideField['fracGFP'] = ODdataWideField['NGFP']/ODdataWideField['NBFP']
+# ODdataWideField['fracRFP'] = ODdataWideField['NRFP']/ODdataWideField['NBFP']
+# ODdataWideField['fracEither'] = (ODdataWideField['fracRFP'] + ODdataWideField['fracGFP']) - ODdataWideField['ObsPBoth']
+
+ODboth = pd.merge(widefieldData, confocalData, on=['OD','ODtot','plant'])
+ODbothBiBi = ODboth[ODboth['plant'].str.contains('BiBi')]
+ODbothMix = ODboth[~ODboth['plant'].str.contains('BiBi')]
+# keep only the widefiled data with the same ODs as 
+
+
+#P = sns.color_palette("husl", 6)
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# sns.scatterplot(data=ODbothBiBi,x='ObsPBoth_x',y='ObsPBoth_y',s=80, marker="o",color='royalblue',alpha=0.6)
+# sns.scatterplot(data=ODbothMix,x='ObsPBoth_x',y='ObsPBoth_y',s=80, marker="o",color='yellow',alpha=0.6)
+#sns.scatterplot(data=ODboth,x='fracRFPconf',y='fracRFP',hue='ODtot',s=60, palette = P, marker="o")
+plt.plot([0.001,0.5],[0.001,0.5],'k-')
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+sns.scatterplot(data=ODboth,x='ObsPBoth_x',y='ObsPBoth_y',s=40, marker="s",color='royalblue',alpha=0.6,edgecolor='none')
+
+plt.xlabel('fraction transformed \n with both (widefiled)')
+plt.ylabel('fraction transformed \n with both (confocal)')
+plt.xscale('log')
+plt.yscale('log')
+plt.title('comparing microscopes \n BiBi and mix combined \n SAPS656 RFP-NLS BBR Spec \n SAPS614 GFP-NLS pVS1 Kan')
+plt.show()
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# sns.scatterplot(data=ODbothBiBi,x='ObsPBoth_x',y='ObsPBoth_y',s=80, marker="o",color='royalblue',alpha=0.6)
+# sns.scatterplot(data=ODbothMix,x='ObsPBoth_x',y='ObsPBoth_y',s=80, marker="o",color='yellow',alpha=0.6)
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+sns.scatterplot(data=ODboth,x='fracRFP_x',y='fracRFP_y',s=40, marker="^",color='orchid',alpha=0.6,edgecolor='none')
+#sns.scatterplot(data=ODboth,x='fracRFPconf',y='fracRFP',hue='ODtot',s=60, palette = P, marker="o")
+plt.plot([0.035,1],[0.035,1],'k-')
+plt.xlabel('fraction transformed \n with RFP (widefiled)')
+plt.ylabel('fraction transformed \n with RFP (confocal)')
+plt.xscale('log')
+plt.yscale('log')
+# plt.xlim(0.005,1)
+# plt.ylim(0.005,1)
+plt.title('comparing microscopes \n BiBi and mix combined \n SAPS656 RFP-NLS BBR Spec \n SAPS614 GFP-NLS pVS1 Kan')
+plt.show()
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# sns.scatterplot(data=ODbothBiBi,x='ObsPBoth_x',y='ObsPBoth_y',s=80, marker="o",color='royalblue',alpha=0.6)
+# sns.scatterplot(data=ODbothMix,x='ObsPBoth_x',y='ObsPBoth_y',s=80, marker="o",color='yellow',alpha=0.6)
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+sns.scatterplot(data=ODboth,x='fracGFP_x',y='fracGFP_y',s=40, marker="o",color='limegreen',alpha=0.6,edgecolor='none')
+#sns.scatterplot(data=ODboth,x='fracRFPconf',y='fracRFP',hue='ODtot',s=60, palette = P, marker="o")
+plt.plot([0.0015,1.1],[0.0015,1.1],'k-')
+
+plt.xlabel('fraction transformed \n with GFP (widefiled)')
+plt.ylabel('fraction transformed \n with GFP (confocal)')
+plt.xscale('log')
+plt.yscale('log')
+# plt.xlim(0.0015,1.1)
+# plt.ylim(0.0015,1.1)
+plt.title('comparing microscopes \n BiBi and mix combined \n SAPS656 RFP-NLS BBR Spec \n SAPS614 GFP-NLS pVS1 Kan')
+plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Dec 11 16:58:10 2023
+
+@author: simon_alamos
+"""
+
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+import scipy as scipy
+from scipy import optimize
+from scipy.stats import iqr
+
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+
+#%%
+
+# load the data
+fractionTransformable = 0.55 # fraction of all nuclei that can get transformed
+
+data = pd.read_csv('/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/12-11-23/CompData.csv')
+data['fracGFP'] = data['NGFP']/(data['NBFP']*fractionTransformable)
+data['fracGFP'].loc[data['fracGFP']>1]=1
+data['fracRFP'] = data['NRFP']/(data['NBFP']*fractionTransformable)
+data['fracRFP'].loc[data['fracRFP']>1]=1
+data['fracEither'] = (data['fracRFP'] + data['fracGFP']) - data['ObsPBoth']
+data['fieldGFPFluo'] = data['meanAvgFluoGFP']*data['NGFP']
+data['fieldRFPFluo'] = data['meanAvgFluoRFP']*data['NRFP']
+
+#%%
+
+# calculate the means for plotting
+MeanPerInf = data.groupby(by=["infName"]).mean()
+SDPerInf = data.groupby(by=["infName"]).std()
+
+#%% plot
+XforPlot = np.arange(len(MeanPerInf))
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# plot all the data points
+#sns.scatterplot(data=ThisODdata, x="ODoneStrain", y="NotGFP",marker='o',color='limegreen',alpha = 0.4,s=15,linewidth=0)
+#sns.scatterplot(data=ThisODdata, x="ODoneStrain", y="NotRFP",marker='^',color='orchid',alpha = 0.4,s=15,linewidth=0)
+#plot the mean and standard error of the data
+plt.errorbar(XforPlot,MeanPerInf['fracGFP'],SDPerInf['fracGFP'], fmt="o", color="k",mfc='limegreen',mec='black', ms=5)
+plt.bar(XforPlot, MeanPerInf['fracGFP'], width=0.8,align='center',color='limegreen',alpha=0.5)
+
+plt.errorbar(XforPlot+0.3,MeanPerInf['fracRFP'],SDPerInf['fracRFP'], fmt="^", color="k",mfc='orchid',mec='black', ms=6)
+
+
+# plt.ylabel('fraction of untransformed \n transformable cells')
+# plt.title('Poisson fit, total OD = ' + str(ODtot) + '\n'+ r'$\alpha$ GFP = ' + str(np.round(fit_alphaG,2)) + '$\pm$'+str(alphaG_error)+ 
+#           '\n'+ r'$\alpha$ RFP = ' + str(np.round(fit_alphaR,2)) + '$\pm$'+str(alphaR_error)+ '\nfraction transformable = '+ str(fractionTransformable),
+#           color='k')
+
+#%%
+what = 'fieldGFPFluo'
+what = 'meanAvgFluoRFP'
+what = 'fieldGFPFluo'
+what='fracGFP'
+fig, ax = plt.subplots(figsize=(4,3.5))
+sns.barplot(data=data, x="infName", y=what,alpha=0.4)
+sns.stripplot(data=data, x="infName", y=what,size=10,facecolor='w')
+plt.xticks(rotation=90)
+plt.ylabel('fraction of RFP cells')    
+plt.xlabel('infiltration')    
+#plt.yscale('log')
+plt.show()
+
+#%% fold change leaf-wise
+data = data.reset_index()
+indices = data['index']
+data['normFracGFP'] = ''
+data['normFracRFP'] = ''
+
+for idx in indices:
+    plantName = data[data['index']==idx]['plant'].values[0]
+    infName = data[data['index']==idx]['infName'].values[0]
+    infOD = infName[infName.rfind('OD')+2:]
+    if infOD == '01' and 'buffer' not in infName:
+        numdata = data.loc[(data['plant']==plantName) & (data['infName']==infName), :]
+        OD2infName = infName[:infName.rfind('OD')+2] + '2'
+        normdata = data.loc[(data['plant']==plantName) & (data['infName']==OD2infName), :]
+        
+        # normFracGFP = normdata['fracGFP'].values[0]/numdata['fracGFP'].values[0]
+        # normFracRFP = normdata['fracRFP'].values[0]/numdata['fracRFP'].values[0]
+        
+        normFracGFP = numdata['fracGFP'].values[0]/normdata['fracGFP'].values[0]
+        normFracRFP = numdata['fracRFP'].values[0]/normdata['fracRFP'].values[0]
+        
+        data.loc[data['index']==idx,'normFracGFP'] = normFracGFP
+        data.loc[data['index']==idx,'normFracRFP'] = normFracRFP
+    else:
+        data.loc[data['index']==idx,'normFracGFP'] = np.nan
+        data.loc[data['index']==idx,'normFracRFP'] = np.nan
+        
+
+#%%
+nan_indices = data.isna() 
+normdata = data.dropna()
+normdata = normdata[normdata['normFracGFP']<5]
+
+what = 'normFracGFP'
+#what = 'meanAvgFluoRFP'
+#what = 'fieldGFPFluo'
+fig, ax = plt.subplots(figsize=(4,3.5))
+sns.barplot(data=normdata, x="infName", y=what,alpha=0.4)
+sns.stripplot(data=normdata, x="infName", y=what,size=8)
+plt.xticks(rotation=90)
+plt.ylabel('fraction of GFP cells at OD 0.1 / OD 2')    
+plt.xlabel('infiltration')    
+#plt.yscale('log')
+plt.show()
+
+
+
+
+
+
+
+
+
+

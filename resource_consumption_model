@@ -1,0 +1,1092 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Dec 26 12:03:16 2023
+
+@author: simon_alamos
+"""
+
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+# to enable LaTeX in labels
+mpl.rcParams['text.usetex'] = True
+mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
+
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+import scipy as scipy
+from scipy import optimize
+from scipy.stats import iqr
+
+# this is to set up the figure style
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+
+
+#%%
+
+def fractionNotTransformed(dilutionOD,  alpha): 
+    # dilutionOD = the OD of the culture that we're diluting, the one with the nuclear tag
+    # NotTransf = our Y values, the fraction of cells that are not transformed (in log scale)
+    # alpha = a sclaing factor to go from OD to poisson probability   
+    NotTransfP = np.exp(-alpha * dilutionOD) # Poisson probability of zero successes
+    return NotTransfP
+
+
+def fractionTransformed(dilutionOD,  alpha): 
+    # dilutionOD = the OD of the culture that we're diluting, the one with the nuclear tag
+    # NotTransf = our Y values, the fraction of cells that are not transformed (in log scale)
+    # alpha = a sclaing factor to go from OD to poisson probability   
+    TransfP = 1-np.exp(-alpha * dilutionOD) # Poisson probability of zero successes
+    return TransfP
+
+def plotGFP():
+    ODtots = [0.05,0.1, 0.5, 1, 2, 3]
+    palette = cm.YlGn(np.linspace(0, 1, len(ODtots)))
+    markers = ['o','s','^','d','v','<']
+    # fig, ax = plt.subplots()
+    # fig.set_size_inches(2.75, 2)
+    
+    for idx, ODtot in enumerate(ODtots):
+        thisColor = palette[idx,:]
+        thisMarker = markers[idx]
+        ThisODdata = ODdata[ODdata['ODtot']==ODtot]
+        
+        #remove the ODtot = 0.2 that I had included in the ODtot=0.1 experiment
+        if ODtot == 0.1:
+            ThisODdata = ThisODdata[ThisODdata.OD != 0.2]       
+        #remove the ODtot = 1 that I had included in the ODtot=0.5 experiment
+        if ODtot == 0.5:
+            ThisODdata = ThisODdata[ThisODdata.OD != 1] 
+        
+        ThisODdata['NotGFP'] = 1 - ThisODdata['fracGFP']
+        ThisODdata['NotRFP'] = 1 - ThisODdata['fracRFP']
+        ThisODdata['ODoneStrain'] = ThisODdata['OD']/2
+        FitX = ThisODdata['ODoneStrain'] # ****  IMPORTANT!  ***** the OD in the dataframe is the mix of green and red strains
+        FitYG = ThisODdata['NotGFP']
+        # FitYR = ThisODdata['NotRFP']
+        xForFit_cont = np.logspace(-3.5,-0.2,100) # dense OD values for plotting purposes
+        
+        #perform the Poisson fit for GFP
+        FitBounds = (-100,100) # lower and upper bounds for alpha
+        poptG, pcov = scipy.optimize.curve_fit(fractionNotTransformed, FitX, FitYG, bounds = FitBounds)
+        fit_alphaG = poptG[0]
+        alphaG_error = np.round(np.sqrt(np.diag(poptG))[0][0],1)
+        fitYG = fractionNotTransformed(FitX, fit_alphaG)
+        fitY_contG = fractionNotTransformed(xForFit_cont, fit_alphaG)
+        
+        # #perform the Poisson fit for RFP
+        # FitBounds = (-100,100) # lower and upper bounds for alpha
+        # poptR, pcov = scipy.optimize.curve_fit(fractionNotTransformed, FitX, FitYR, bounds = FitBounds)
+        # fit_alphaR = poptR[0]
+        # alphaR_error = np.round(np.sqrt(np.diag(poptR))[0][0],1)
+        # fitYR = fractionNotTransformed(FitX, fit_alphaR)
+        # fitY_contR = fractionNotTransformed(xForFit_cont, fit_alphaR)
+        
+        # calculate the means for plotting
+        MeanPerOD = ThisODdata.groupby(by=["ODoneStrain"]).mean()
+        SDPerOD = ThisODdata.groupby(by=["ODoneStrain"]).sem()
+        NotGFPMeanPerOD = MeanPerOD['NotGFP']
+        # NotRFPMeanPerOD = MeanPerOD['NotRFP']
+        NotGFPSDPerOD = SDPerOD['NotGFP']
+        # NotRFPSDPerOD = SDPerOD['NotRFP']
+        ODvals = MeanPerOD.index
+        
+        # now do the plotting itself
+        #plt.plot(np.log10(xForFit_cont),fitY_contG,'-',lw=1.5,color=thisColor)
+        #plt.plot(np.log10(xForFit_cont),fitY_contG,'-',lw=1.5,color=thisColor, label='_nolegend_')
+        #plt.errorbar(np.log10(ODvals),NotGFPMeanPerOD,NotGFPSDPerOD, fmt="o", color="k",mfc = thisColor, mec='black', ms=5)
+        plt.errorbar(np.log10(ODvals),NotGFPMeanPerOD,NotGFPSDPerOD, fmt="o", color="k",mfc = thisColor, mec='black',marker=thisMarker,ms=5.5)
+    
+#%% grab data for plotting later
+
+# load the experiment_database spreadsheet
+print('navigate to the folder where the experiment database file is stored - then select any file')
+file_path = filedialog.askopenfilename() # store the file path as a string
+lastFileSep = file_path.rfind(filesep) # find the position of the last path separator
+folderpath = file_path[0:lastFileSep] # get the part of the path corresponding to the folder where the chosen file was located
+experiment_database_filePath = folderpath + filesep + 'experiment_database.csv'
+experiment_database = pd.read_csv(experiment_database_filePath)
+
+# select which experiments to aggregate. Refer to 'experiment_database' spreadsheet for more info
+experimentIDs = ['1','2','3','4','5','6','9','12','14','17']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+ODdilution_exp_database = experiment_database[condition]
+
+#initialize a dataframe to store values
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+ODdata = pd.DataFrame([], columns=cols)
+
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in ODdilution_exp_database['Experiment_ID'].values:
+    thisExperiment = ODdilution_exp_database[ODdilution_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    ODdata = pd.concat([ODdata,expCountsData])
+
+
+# convert the counts to int64
+ODdata = ODdata.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+# calculate fractions
+fractionTransformable = 0.45
+ODdata['ODoneStrain'] = ODdata['OD']/2 # this is the OD of 1/2 of the labeled bacteria.
+# since the labeled GFP and RFP strains are infiltrated at the same OD, this is the OD of each labeled strain
+ODdata['fracGFP'] = ODdata['NGFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracGFP'].loc[ODdata['fracGFP']>1]=1
+ODdata['fracRFP'] = ODdata['NRFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracRFP'].loc[ODdata['fracRFP']>1]=1
+ODdata['NotGFP'] = 1 - ODdata['fracGFP']
+ODdata['NotRFP'] = 1 - ODdata['fracRFP']
+
+#%%
+
+# #%%
+# # define the model parameters
+# Xo = 0.001# initial abundance of cells X, the outcompeted strain
+# Yo = 0.1-Xo # initial abundance of  cells Y, the competing dominant strain
+# m = 0.075 # rate of cel death
+# c = 0.0175 # rate of consumption of the resource by either strain
+# k = 0.01 # basal rate of production of the resource by the host
+# g = 0.001 # basal rate of consumption of the resource by the host
+# Ro = k/g # initial abundance of resource
+
+# # define simulation parameters
+# dt = 0.005#1/np.min([c,k,g])/10 # absolute duration of the time step
+# TotalTime = 500
+# Ntime = int(TotalTime/dt)
+# NX = np.zeros(Ntime) # for strain x
+# NY = np.zeros(Ntime) # for strain y
+# NR = np.zeros(Ntime) # for the resource r
+
+# # initialize the simulation
+# NX[0] = Xo
+# NY[0] = Yo
+# NR[0] = Ro
+
+# # this is to plot the temporal evolution of the species
+# tVector = np.arange(0,TotalTime,dt)
+# tVectorAbs = np.arange(0,Ntime,1)*dt
+# #%
+# for t in range(1,Ntime): # loop over time with the exception of the first time point whcih we initialized already
+
+#     dX = dt * (c*NR[t-1]*NX[t-1] - m*NX[t-1])
+#     dY = dt * (c*NR[t-1]*NY[t-1] - m*NY[t-1])
+#     dR = dt * (k - g*NR[t-1] - c*NR[t-1]*NY[t-1] - c*NR[t-1]*NX[t-1])
+    
+#     NX[t] = NX[t-1] + dX
+#     NY[t] = NY[t-1] + dY
+#     NR[t] = NR[t-1] + dR
+    
+# fig, ax = plt.subplots()
+# fig.set_size_inches(2, 2)
+# plt.plot(tVectorAbs,NX,'r-')
+# plt.plot(tVectorAbs,NY,'g-') 
+# plt.plot(tVectorAbs,NR,'k-')
+# plt.legend(['X','Y','R'])
+# plt.xscale('log')
+# plt.yscale('log')
+
+
+# # fig, ax = plt.subplots()
+# # fig.set_size_inches(2, 2)
+# # plt.plot(tVectorAbs,NX/Xo,'r-')
+# # plt.plot(tVectorAbs,NY/Yo,'g-') 
+# # plt.plot(tVectorAbs,NR/Ro,'k-')
+# # plt.legend(['X','Y','R'])
+# # plt.xscale('log')
+
+
+
+# print(['ratio = ' + str(np.round(Xo/Yo,4)) + '; peak fold= ' + str(np.round(np.max(NX)/Xo,2))])
+
+
+#%% now do it in a loop trying different values of the competing strain
+ODtots = [0.05, 0.1, 0.5, 1, 2, 3]
+ODtots = [0.05, 0.5, 2]
+#ODdils = [0.001,0.002,0.005,0.01,0.025,0.05,0.1,0.5,1,2,3]
+ODdils = [0.002,0.01,0.1,0.1]
+
+m = 0.025 # rate of cell death
+c = 0.01 # rate of consumption of the resource by either strain
+E = 0.2#0.85 # efficiency of converting one unit of resource into one cell
+k = 0.001 # basal rate of production of the resource by the host
+g = 0.0005 # basal rate of consumption of the resource by the host
+Ro = k/g # initial abundance of resource
+
+
+
+# define simulation parameters
+dt = 0.5#1/np.min([c,k,g])/10 # absolute duration of the time step
+TotalTime = 10000
+Ntime = int(TotalTime/dt)
+tVector = np.arange(0,TotalTime,dt)
+tVectorAbs = np.arange(0,Ntime,1)*dt
+foldGrowth = np.empty((len(ODtots),len(ODdils)))
+foldGrowth[:] = np.nan
+
+for i, ODtot in enumerate(ODtots):
+    #print(i)
+    ODdils2 = [x for x in ODdils if x<= ODtot]
+    for j, ODi in enumerate(ODdils2):
+        print(j)
+        # define the model parameters
+        Xo = ODi# initial abundance of cells X, the outcompeted strain
+        Yo = ODtot-ODi # initial abundance of  cells Y, the competing dominant strain     
+
+        NX = np.zeros(Ntime) # for strain x
+        NY = np.zeros(Ntime) # for strain y
+        NR = np.zeros(Ntime) # for the resource r        
+        # initialize the simulation
+        NX[0] = Xo
+        NY[0] = Yo
+        NR[0] = Ro
+        
+        for t in range(1,Ntime): # loop over time with the exception of the first time point whcih we initialized already        
+            dX = dt * (c*E*NR[t-1]*NX[t-1] - m*NX[t-1])
+            dY = dt * (c*E*NR[t-1]*NY[t-1] - m*NY[t-1])
+            dR = dt * (k - g*NR[t-1] - c*NR[t-1]*NY[t-1] - c*NR[t-1]*NX[t-1])
+            #dR = dt * (-c*NR[t-1]*NY[t-1] - c*NR[t-1]*NX[t-1])
+            
+            NX[t] = NX[t-1] + dX
+            NY[t] = NY[t-1] + dY
+            NR[t] = NR[t-1] + dR
+            
+        tPoint = 1000
+        fig, ax = plt.subplots()
+        fig.set_size_inches(2, 2)
+        plt.plot(tVectorAbs,NX,'r-')
+        plt.plot(tVectorAbs,NY,'g-') 
+        #plt.plot(tVectorAbs,NR,'k-')
+        #plt.plot([tPoint,tPoint],[NX[tVectorAbs==tPoint],10**-5],'b--')
+        plt.legend(['X','Y','R'])
+        #plt.xscale('log')
+        plt.yscale('log')
+        #plt.ylim(10**-6,5)
+        plt.title('ODtot = '+str(ODtot) + '; ODdil = ' + str(Xo))
+        
+        foldGrowth[i,j] = NX[-1]#NX[tVectorAbs==tPoint]#
+        
+        
+        
+        
+fig2, ax = plt.subplots()
+fig2.set_size_inches(2, 2)
+plt.plot(ODdils,foldGrowth.transpose(),'-o')
+forlegend = [str(x) for x in ODtots]
+plt.legend(forlegend)
+plt.ylabel('simulated final OD')
+plt.xlabel('infiltration OD') 
+plt.xscale('log')
+plt.yscale('log')
+
+
+# m = -0.8734228752402693 #this is for GFP
+# fig3, ax = plt.subplots()
+# fig3.set_size_inches(2, 2)
+# for idx, odt in enumerate(ODtots):
+#     scalingFactor = np.exp(m*odt)
+#     effectiveODs = foldGrowth[idx,:]
+#     scaledODs = np.multiply(ODdils,scalingFactor)
+#     plt.plot(ODdils,scaledODs)
+# plt.xlabel('infiltration OD')
+# plt.ylabel('rescaled effective OD')    
+# plt.xscale('log')
+# plt.yscale('log')
+
+slope = -0.8734228752402693 #this is for GFP
+fig3, ax = plt.subplots()
+fig3.set_size_inches(2, 2)
+for idx, odt in enumerate(ODtots):
+    
+    scalingFactor = np.exp(slope*odt)
+    
+    effectiveODs = foldGrowth[idx,:]
+    
+    scaledInfiltrationODs = np.multiply(ODdils,scalingFactor)
+    
+    plt.plot(scaledInfiltrationODs,effectiveODs,'-o')
+    
+    plt.plot(scaledInfiltrationODs,scaledInfiltrationODs,'k--')
+
+    
+plt.ylabel('simulated final OD')
+plt.xlabel('rescaled infiltration OD') 
+plt.title('m= ' + str(m) + '; c= ' +str(c) + '\n k=' + str(k)+ '; g=' + str(g)+ '; E=' + str(E))   
+plt.xscale('log')
+plt.yscale('log')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(3, 2)
+alpha = 100
+alphas = [100, 95, 50, 30, 17, 8]
+for idx, odt in enumerate(ODtots):
+    scalingFactor = np.exp(slope*odt)
+    effectiveODs = foldGrowth[idx,:]
+    effectiveODs = effectiveODs[~np.isnan(effectiveODs)]
+    dilutionODs = np.array([x for x in ODdils if x<= odt])
+    
+    a = alphas[idx]
+    pNot_ = fractionNotTransformed(dilutionODs,  a)
+    pNot_eff = fractionNotTransformed(effectiveODs,  a)
+    
+    plt.plot(effectiveODs,pNot_,'-o')#,color=myPalette2[idx],alpha=1,lw=2)
+    #plt.plot(dilutionODs,pNot_,'-o')
+    
+plt.xscale('log')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1.35, 1.04))
+plt.xlabel('effective dilution OD')
+plt.ylabel('fraction of cells not transformed')
+plt.title('resource competition model')
+plt.show()
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(3, 2)
+alpha = 100
+alphas = [100, 95, 50, 30, 17, 8]
+for idx, odt in enumerate(ODtots):
+    scalingFactor = np.exp(slope*odt)
+    effectiveODs = foldGrowth[idx,:]
+    effectiveODs = effectiveODs[~np.isnan(effectiveODs)]
+    dilutionODs = np.array([x for x in ODdils if x<= odt])
+    
+    a = alphas[idx]
+    pNot_ = fractionNotTransformed(dilutionODs,  a)
+    pNot_eff = fractionNotTransformed(effectiveODs,  a)
+    
+    #plt.plot(effectiveODs,pNot_,'-o')#,color=myPalette2[idx],alpha=1,lw=2)
+    plt.plot(dilutionODs,pNot_,'-o')
+    
+plt.xscale('log')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1.35, 1.04))
+plt.xlabel('dilution OD')
+plt.ylabel('fraction of cells not transformed')
+plt.title('resource competition model')
+plt.show()
+
+
+
+
+
+#%% now do it in a loop with a single strain
+ODdils = [0.001,0.002,0.005,0.01,0.025,0.05,0.1,0.5,1,2,3]
+#ODdils = [0.002,0.01,0.1,0.1]
+
+m = 0.011 # rate of cell death
+c = 0.01 # rate of consumption of the resource by either strain
+E = 0.13#0.85 # efficiency of converting one unit of resource into one cell
+k = 0.11 # basal rate of production of the resource by the host
+g = 0.01 # basal rate of consumption of the resource by the host
+Ro = k/g # initial abundance of resource
+# m = 0.002 # rate of cell death
+# c = 0.001 # rate of consumption of the resource by either strain
+# E = 0.15#0.85 # efficiency of converting one unit of resource into one cell
+# k = 0.15 # basal rate of production of the resource by the host
+# g = 0.01 # basal rate of consumption of the resource by the host
+# Ro = k/g # initial abundance of resource
+
+# define simulation parameters
+dt = 0.5#1/np.min([c,k,g])/10 # absolute duration of the time step
+TotalTime = 5000
+Ntime = int(TotalTime/dt)
+tVector = np.arange(0,TotalTime,dt)
+tVectorAbs = np.arange(0,Ntime,1)*dt
+foldGrowth = np.empty(len(ODdils))
+foldGrowth[:] = np.nan
+
+ODdils2 = [x for x in ODdils if x<= ODtot]
+for i, ODi in enumerate(ODdils2):
+    print(j)
+    # define the model parameters
+    Xo = ODi# initial abundance of cells X, the outcompeted strain
+    NX = np.zeros(Ntime) # for strain x
+    NR = np.zeros(Ntime) # for the resource r        
+    # initialize the simulation
+    NX[0] = Xo
+    NR[0] = Ro
+    
+    for t in range(1,Ntime): # loop over time with the exception of the first time point whcih we initialized already        
+        dX = dt * (c*E*NR[t-1]*NX[t-1] - m*NX[t-1])
+        dR = dt * (k - g*NR[t-1]  - c*NR[t-1]*NX[t-1])
+        
+        NX[t] = NX[t-1] + dX
+        NY[t] = NY[t-1] + dY
+        NR[t] = NR[t-1] + dR
+        
+    tPoint = 1000
+    fig, ax = plt.subplots()
+    fig.set_size_inches(2, 2)
+    plt.plot(tVectorAbs,NX,'r-')
+    plt.plot(tVectorAbs,NR,'k-')
+    #plt.plot([tPoint,tPoint],[NX[tVectorAbs==tPoint],10**-5],'b--')
+    plt.legend(['X','Y','R'])
+    plt.xscale('log')
+    plt.yscale('log')
+    #plt.ylim(10**-6,5)
+    plt.title('ODtot = '+str(ODtot) + '; ODdil = ' + str(Xo))
+    
+    foldGrowth[i] = NX[tVectorAbs==tPoint]#NX[-1]
+    
+    
+    
+        
+fig2, ax = plt.subplots()
+fig2.set_size_inches(2, 2)
+plt.plot(ODdils,foldGrowth.transpose(),'-o')
+plt.plot([0.35, 0.35],[np.min(foldGrowth.transpose()),np.max(foldGrowth.transpose())])
+#plt.plot(ODdils,ODdils,'k--')
+plt.legend(['single strain','saturation OD','x=y'])
+plt.ylabel('simulated final OD')
+plt.xlabel('infiltration OD') 
+plt.xscale('log')
+plt.yscale('log')
+
+
+# m = -0.8734228752402693 #this is for GFP
+# fig3, ax = plt.subplots()
+# fig3.set_size_inches(2, 2)
+# for idx, odt in enumerate(ODtots):
+#     scalingFactor = np.exp(m*odt)
+#     effectiveODs = foldGrowth[idx,:]
+#     scaledODs = np.multiply(ODdils,scalingFactor)
+#     plt.plot(ODdils,scaledODs)
+# plt.xlabel('infiltration OD')
+# plt.ylabel('rescaled effective OD')    
+# plt.xscale('log')
+# plt.yscale('log')
+
+# slope = -0.8734228752402693 #this is for GFP
+# fig3, ax = plt.subplots()
+# fig3.set_size_inches(2, 2)
+# for idx, odt in enumerate(ODtots):
+    
+#     scalingFactor = np.exp(slope*odt)
+    
+#     effectiveODs = foldGrowth[idx,:]
+    
+#     scaledInfiltrationODs = np.multiply(ODdils,scalingFactor)
+    
+#     plt.plot(scaledInfiltrationODs,effectiveODs,'-o')
+    
+# plt.ylabel('simulated final OD')
+# plt.xlabel('rescaled infiltration OD') 
+# plt.title('m= ' + str(m) + '; c= ' +str(c) + '\n k=' + str(k)+ '; g=' + str(g)+ '; E=' + str(E))   
+# plt.xscale('log')
+# plt.yscale('log')
+
+
+# fig, ax = plt.subplots()
+# fig.set_size_inches(3, 2)
+# alpha = 100
+# alphas = [100, 95, 50, 30, 17, 8]
+# for idx, odt in enumerate(ODtots):
+#     scalingFactor = np.exp(slope*odt)
+#     effectiveODs = foldGrowth[idx,:]
+#     effectiveODs = effectiveODs[~np.isnan(effectiveODs)]
+#     dilutionODs = np.array([x for x in ODdils if x<= odt])
+    
+#     a = alphas[idx]
+#     pNot_ = fractionNotTransformed(dilutionODs,  a)
+#     pNot_eff = fractionNotTransformed(effectiveODs,  a)
+    
+#     plt.plot(effectiveODs,pNot_,'-o')#,color=myPalette2[idx],alpha=1,lw=2)
+#     #plt.plot(dilutionODs,pNot_,'-o')
+    
+# plt.xscale('log')
+# plt.legend(ODtots, title='total OD',bbox_to_anchor =(1.35, 1.04))
+# plt.xlabel('effective dilution OD \n i.e. OD of bound cells (same alpha)')
+# plt.ylabel('fraction of cells not transformed')
+# plt.title('resource competition model')
+# plt.show()
+
+
+
+
+#%% logistic growth
+
+
+ODtots = [0.05, 1, 3]
+ODdils = [0.005, 0.01, 0.1, 0.5, 1]
+#ODdils = [0.001,0.002,0.005,0.01,0.025,0.05,0.1,0.5,1,2,3]
+#ODdils = [0.002,0.01,0.05,0.25,0.1]
+
+r = 0.001
+K = 0.0045
+
+# define simulation parameters
+dt = 0.05#1/np.min([c,k,g])/10 # absolute duration of the time step
+TotalTime = 5000
+Ntime = int(TotalTime/dt)
+tVector = np.arange(0,TotalTime,dt)
+tVectorAbs = np.arange(0,Ntime,1)*dt
+foldGrowth = np.empty((len(ODtots),len(ODdils)))
+foldGrowth[:] = np.nan
+
+for i, ODtot in enumerate(ODtots):
+    #print(i)
+    ODdils2 = [x for x in ODdils if x<= ODtot]
+    for j, ODi in enumerate(ODdils2):
+        print(j)
+        # define the model parameters
+        Xo = ODi# initial abundance of cells X, the outcompeted strain
+        Yo = ODtot-ODi # initial abundance of  cells Y, the competing dominant strain   
+        Ntoto = Xo+Yo # the intital total number of cells
+
+        NX = np.zeros(Ntime) # for strain x
+        NY = np.zeros(Ntime) # for strain y
+        Ntot = np.zeros(Ntime) # for all bacteria combined
+        # initialize the simulation
+        NX[0] = Xo
+        NY[0] = Yo
+        Ntot[0] = Ntoto
+        
+        for t in range(1,Ntime): # loop over time with the exception of the first time point whcih we initialized already 
+            Ntot_now = NX[t-1] + NY[t-1]
+            dX = dt * (r * NX[t-1] *(1 - Ntot_now/K))
+            dY = dt * (r * NY[t-1] *(1 - Ntot_now/K))
+            dTot = dX + dY
+            
+            NX[t] = NX[t-1] + dX
+            NY[t] = NY[t-1] + dY
+            Ntot[t] = Ntot[t-1] + dTot
+            
+        fig, ax = plt.subplots()
+        fig.set_size_inches(2, 2)
+        plt.plot(tVectorAbs,NX,'r-')
+        plt.plot(tVectorAbs,NY,'g-') 
+        plt.legend(['X','Y','R'])
+        plt.xscale('log')
+        plt.yscale('log')
+        plt.title('ODtot = '+str(Ntoto) + '; ODdil = ' + str(Xo))
+        
+        foldGrowth[i,j] = NX[-1]
+        
+        
+
+fig2, ax = plt.subplots()
+fig2.set_size_inches(2, 2)
+plt.plot(ODdils,foldGrowth.transpose(),'-o')
+forlegend = [str(x) for x in ODtots]
+plt.legend(forlegend)
+plt.xlabel('infiltration OD')
+plt.ylabel('simulated OD')
+plt.xscale('log')
+plt.yscale('log')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(3, 2)
+alpha = 100
+slope = -0.8734228752402693 #this is for GFP
+alphas = [100, 95, 50, 30, 17, 8]
+for idx, odt in enumerate(ODtots):
+    scalingFactor = np.exp(slope*odt)
+    effectiveODs = foldGrowth[idx,:]
+    effectiveODs = effectiveODs[~np.isnan(effectiveODs)]
+    dilutionODs = np.array([x for x in ODdils if x<= odt])
+    
+    a = alphas[idx]
+    pNot_ = fractionNotTransformed(dilutionODs,  a)
+    pNot_eff = fractionNotTransformed(effectiveODs,  a)
+    
+    plt.plot(effectiveODs,pNot_,'-o')#,color=myPalette2[idx],alpha=1,lw=2)
+    #plt.plot(dilutionODs,pNot_,'-o')
+    
+plt.xscale('log')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1.35, 1.04))
+plt.xlabel('effective dilution OD \n i.e. OD of bound cells (same alpha)')
+plt.ylabel('fraction of cells not transformed')
+plt.title('resource competition model')
+plt.show()
+
+
+#%% Model with no resource creation nor consunption by host
+
+ODtots = [0.05, 0.1, 0.5, 1, 2, 3]
+ODdils = [0.001,0.002,0.005,0.01,0.025,0.05,0.1,0.5,1,2,3]
+#ODdils = [0.002,0.01,0.1,0.1]
+
+m = 0.00016 # rate of cell death
+c = 0.5 # rate of consumption of the resource by either strain
+E = 1 # 0.85 # efficiency of converting one unit of resource into one cell
+Ro = 0.3
+
+
+# define simulation parameters
+dt = 0.5#1/np.min([c,k,g])/10 # absolute duration of the time step
+TotalTime = 10000
+Ntime = int(TotalTime/dt)
+tVector = np.arange(0,TotalTime,dt)
+tVectorAbs = np.arange(0,Ntime,1)*dt
+foldGrowth = np.empty((len(ODtots),len(ODdils)))
+foldGrowth[:] = np.nan
+
+for i, ODtot in enumerate(ODtots):
+    #print(i)
+    ODdils2 = [x for x in ODdils if x<= ODtot]
+    for j, ODi in enumerate(ODdils2):
+        print(j)
+        # define the model parameters
+        Xo = ODi# initial abundance of cells X, the outcompeted strain
+        Yo = ODtot-ODi # initial abundance of  cells Y, the competing dominant strain     
+
+        NX = np.zeros(Ntime) # for strain x
+        NY = np.zeros(Ntime) # for strain y
+        NR = np.zeros(Ntime) # for the resource r        
+        # initialize the simulation
+        NX[0] = Xo
+        NY[0] = Yo
+        NR[0] = Ro
+        
+        for t in range(1,Ntime): # loop over time with the exception of the first time point whcih we initialized already        
+            dX = dt * (c*E*NR[t-1]*NX[t-1] - m*NX[t-1])
+            dY = dt * (c*E*NR[t-1]*NY[t-1] - m*NY[t-1])
+            dR = dt * (-c*NR[t-1]*NY[t-1] - c*NR[t-1]*NX[t-1])
+            
+            NX[t] = NX[t-1] + dX
+            NY[t] = NY[t-1] + dY
+            NR[t] = NR[t-1] + dR
+            
+        tPoint = 10
+        fig, ax = plt.subplots()
+        fig.set_size_inches(2, 2)
+        plt.plot(tVectorAbs,NX,'r-')
+        plt.plot(tVectorAbs,NY,'g-') 
+        #plt.plot(tVectorAbs,NR,'k-')
+        #plt.plot([tPoint,tPoint],[NX[tVectorAbs==tPoint],10**-5],'b--')
+        plt.legend(['X','Y','R'])
+        plt.xscale('log')
+        plt.yscale('log')
+        #plt.ylim(10**-6,5)
+        plt.title('ODtot = '+str(ODtot) + '; ODdil = ' + str(Xo))
+        
+        foldGrowth[i,j] = NX[-1]
+        
+        
+        
+        
+fig2, ax = plt.subplots()
+fig2.set_size_inches(2, 2)
+plt.plot(ODdils,foldGrowth.transpose(),'-o')
+forlegend = [str(x) for x in ODtots]
+plt.legend(forlegend)
+plt.ylabel('simulated final OD')
+plt.xlabel('infiltration OD') 
+plt.xscale('log')
+plt.yscale('log')
+
+
+# m = -0.8734228752402693 #this is for GFP
+# fig3, ax = plt.subplots()
+# fig3.set_size_inches(2, 2)
+# for idx, odt in enumerate(ODtots):
+#     scalingFactor = np.exp(m*odt)
+#     effectiveODs = foldGrowth[idx,:]
+#     scaledODs = np.multiply(ODdils,scalingFactor)
+#     plt.plot(ODdils,scaledODs)
+# plt.xlabel('infiltration OD')
+# plt.ylabel('rescaled effective OD')    
+# plt.xscale('log')
+# plt.yscale('log')
+
+slope = -0.8734228752402693 #this is for GFP
+fig3, ax = plt.subplots()
+fig3.set_size_inches(2, 2)
+for idx, odt in enumerate(ODtots):
+    
+    scalingFactor = np.exp(slope*odt)
+    
+    effectiveODs = foldGrowth[idx,:]
+    
+    scaledInfiltrationODs = np.multiply(ODdils,scalingFactor)
+    
+    plt.plot(scaledInfiltrationODs,effectiveODs,'-o')
+    plt.plot(scaledInfiltrationODs,scaledInfiltrationODs,'k--')
+    
+plt.ylabel('simulated final OD')
+plt.xlabel('rescaled infiltration OD') 
+plt.title('m= ' + str(m) + '; c= ' +str(c) + '\n k=' + str(k)+ '; g=' + str(g)+ '; E=' + str(E))   
+plt.xscale('log')
+plt.yscale('log')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(3, 2)
+alpha = 100
+alphas = [100, 95, 50, 30, 17, 8]
+for idx, odt in enumerate(ODtots):
+    scalingFactor = np.exp(slope*odt)
+    effectiveODs = foldGrowth[idx,:]
+    effectiveODs = effectiveODs[~np.isnan(effectiveODs)]
+    dilutionODs = np.array([x for x in ODdils if x<= odt])
+    
+    a = alphas[idx]
+    pNot_ = fractionNotTransformed(dilutionODs,  a)
+    pNot_eff = fractionNotTransformed(effectiveODs,  a)
+    
+    plt.plot(effectiveODs,pNot_,'-o')#,color=myPalette2[idx],alpha=1,lw=2)
+    #plt.plot(dilutionODs,pNot_,'-o')
+    
+plt.xscale('log')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1.35, 1.04))
+plt.xlabel('effective dilution OD')
+plt.ylabel('fraction of cells not transformed')
+plt.title('resource competition model')
+plt.show()
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(3, 2)
+alpha = 100
+alphas = [100, 95, 50, 30, 17, 8]
+for idx, odt in enumerate(ODtots):
+    scalingFactor = np.exp(slope*odt)
+    effectiveODs = foldGrowth[idx,:]
+    effectiveODs = effectiveODs[~np.isnan(effectiveODs)]
+    dilutionODs = np.array([x for x in ODdils if x<= odt])
+    
+    a = alphas[idx]
+    pNot_ = fractionNotTransformed(dilutionODs,  a)
+    pNot_eff = fractionNotTransformed(effectiveODs,  a)
+    
+    #plt.plot(effectiveODs,pNot_,'-o')#,color=myPalette2[idx],alpha=1,lw=2)
+    plt.plot(dilutionODs,pNot_,'-o')
+    
+plt.xscale('log')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1.35, 1.04))
+plt.xlabel('dilution OD')
+plt.ylabel('fraction of cells not transformed')
+plt.title('resource competition model')
+plt.show()
+
+
+#%%
+
+#%% MODIFIED MACARTHUR: now do it in a loop trying different values of the competing strain
+
+ODtots = [0.05, 0.1, 0.5, 1, 2, 3]
+ODtots = [0.05, 0.1, 0.5, 1, 2, 3]
+ODdils = [0.001,0.002,0.005,0.01,0.025,0.05,0.1,0.5,1,2,3]
+#ODdils = [0.002,0.01,0.1,0.1]
+
+# m = 0.0004 # rate of cell death
+# c = 0.0075 # rate of consumption of the resource by either strain
+# E = 0.5 #  efficiency of converting one unit of resource into one cell
+# r = 0.01 # basal rate of production of the resource by the host
+# K = 0.1 # carrying capacity of the resource
+# Ro = 0.1
+
+m = 0.0015 # rate of cell death
+c = 0.115 # rate of consumption of the resource by either strain
+E = 0.1 #  efficiency of converting one unit of resource into one cell
+r = 0.2 # basal rate of production of the resource by the host
+K = 0.15 # carrying capacity of the resource
+Ro = 0.15
+
+# define simulation parameters
+dt = 0.5#1/np.min([c,k,g])/10 # absolute duration of the time step
+TotalTime = 10000
+Ntime = int(TotalTime/dt)
+tVector = np.arange(0,TotalTime,dt)
+tVectorAbs = np.arange(0,Ntime,1)*dt
+foldGrowth = np.empty((len(ODtots),len(ODdils)))
+foldGrowth[:] = np.nan
+
+for i, ODtot in enumerate(ODtots):
+    #print(i)
+    ODdils2 = [x for x in ODdils if x<= ODtot]
+    for j, ODi in enumerate(ODdils2):
+        print(j)
+        # define the model parameters
+        Xo = ODi# initial abundance of cells X, the outcompeted strain
+        Yo = ODtot-ODi # initial abundance of  cells Y, the competing dominant strain     
+
+        NX = np.zeros(Ntime) # for strain x
+        NY = np.zeros(Ntime) # for strain y
+        NR = np.zeros(Ntime) # for the resource r        
+        # initialize the simulation
+        NX[0] = Xo
+        NY[0] = Yo
+        NR[0] = Ro
+        
+        for t in range(1,Ntime): # loop over time with the exception of the first time point whcih we initialized already        
+            dX = dt * (c*E*NR[t-1]*NX[t-1] - m*NX[t-1])
+            dY = dt * (c*E*NR[t-1]*NY[t-1] - m*NY[t-1])
+            dR = dt * (r*NR[t-1]*((K-NR[t-1])/K) - c*NR[t-1]*NY[t-1] - c*NR[t-1]*NX[t-1])
+            #dR = dt * (-c*NR[t-1]*NY[t-1] - c*NR[t-1]*NX[t-1])
+            
+            NX[t] = NX[t-1] + dX
+            NY[t] = NY[t-1] + dY
+            NR[t] = NR[t-1] + dR
+            
+        tPoint = 1000
+        fig, ax = plt.subplots()
+        fig.set_size_inches(2, 2)
+        plt.plot(tVectorAbs,NX,'r-')
+        plt.plot(tVectorAbs,NY,'g-') 
+        plt.plot(tVectorAbs,NR,'k-')
+        #plt.plot([tPoint,tPoint],[NX[tVectorAbs==tPoint],10**-5],'b--')
+        plt.legend(['X','Y','R'])
+        #plt.xscale('log')
+        plt.yscale('log')
+        #plt.ylim(10**-6,5)
+        plt.title('ODtot = '+str(ODtot) + '; ODdil = ' + str(Xo))
+        
+        foldGrowth[i,j] = NX[-1]#NX[tVectorAbs==tPoint]#
+        
+        
+        
+        
+fig2, ax = plt.subplots()
+fig2.set_size_inches(2, 2)
+plt.plot(ODdils,foldGrowth.transpose(),'-o')
+forlegend = [str(x) for x in ODtots]
+plt.legend(forlegend)
+plt.ylabel('simulated final OD')
+plt.xlabel('infiltration OD') 
+plt.xscale('log')
+plt.yscale('log')
+
+
+# m = -0.8734228752402693 #this is for GFP
+# fig3, ax = plt.subplots()
+# fig3.set_size_inches(2, 2)
+# for idx, odt in enumerate(ODtots):
+#     scalingFactor = np.exp(m*odt)
+#     effectiveODs = foldGrowth[idx,:]
+#     scaledODs = np.multiply(ODdils,scalingFactor)
+#     plt.plot(ODdils,scaledODs)
+# plt.xlabel('infiltration OD')
+# plt.ylabel('rescaled effective OD')    
+# plt.xscale('log')
+# plt.yscale('log')
+
+slope = -0.8734228752402693 #this is for GFP
+fig3, ax = plt.subplots()
+fig3.set_size_inches(2, 2)
+for idx, odt in enumerate(ODtots):
+    
+    scalingFactor = np.exp(slope*odt)
+    
+    effectiveODs = foldGrowth[idx,:]
+    
+    scaledInfiltrationODs = np.multiply(ODdils,scalingFactor)
+    
+    plt.plot(scaledInfiltrationODs,effectiveODs,'-o')
+    
+    plt.plot(scaledInfiltrationODs,scaledInfiltrationODs,'k--')
+
+    
+plt.ylabel('simulated final OD')
+plt.xlabel('rescaled infiltration OD') 
+plt.title('m= ' + str(m) + '; c= ' +str(c) + '\n K=' + str(K)+ '; Ro=' + str(Ro)+ '; E=' + str(E))   
+plt.xscale('log')
+plt.yscale('log')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(3, 2)
+alpha = 100
+alphas = [100, 95, 50, 30, 17, 8]
+palette = cm.YlGn(np.linspace(0, 1, len(ODtots)))
+markers = ['o','s','^','d','v','<']
+for idx, odt in enumerate(ODtots):
+    scalingFactor = np.exp(slope*odt)
+    effectiveODs = foldGrowth[idx,:]
+    effectiveODs = effectiveODs[~np.isnan(effectiveODs)]
+    dilutionODs = np.array([x for x in ODdils if x<= odt])
+    
+    a = alphas[idx]
+    pNot_ = fractionNotTransformed(dilutionODs,  a)
+    pNot_eff = fractionNotTransformed(effectiveODs,  a)
+    
+    plt.plot(effectiveODs,pNot_,linestyle='none',mfc=palette[idx],marker=markers[idx],mec='k')#,color=myPalette2[idx],alpha=1,lw=2)
+    #plt.plot(dilutionODs,pNot_,'-o')
+    
+plt.xscale('log')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1.35, 1.04))
+plt.xlabel('effective dilution OD')
+plt.ylabel('fraction of cells not transformed')
+plt.title('resource competition model')
+plt.show()
+
+
+
+
+alpha = 100
+#alphas = [100, 95, 50, 30, 17, 8]
+palette = cm.YlGn(np.linspace(0, 1, len(ODtots)))
+for idx, odt in enumerate(ODtots):
+    fig, ax = plt.subplots()
+    fig.set_size_inches(3, 2)
+    plotGFP()
+    # Change major ticks to show every x.
+    ax.xaxis.set_major_locator(MultipleLocator(0.5))
+    ax.yaxis.set_major_locator(MultipleLocator(0.2))
+    
+    # Change minor ticks to show every x
+    ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+    ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+    
+    # Turn grid on for both major and minor ticks and style minor slightly differently.
+    ax.grid(which='major', color='#CCCCCC', linestyle='-')
+    ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+    plt.grid() 
+    thisColor = palette[idx]
+    scalingFactor = np.exp(slope*odt)
+    effectiveODs = foldGrowth[idx,:]
+    effectiveODs = effectiveODs[~np.isnan(effectiveODs)]
+    dilutionODs = np.array([x for x in ODdils if x<= odt])
+    
+    a = alphas[idx]
+    pNot_ = fractionNotTransformed(dilutionODs,  a)
+    pNot_eff = fractionNotTransformed(effectiveODs,  alpha)
+    
+    #plt.plot(effectiveODs,pNot_,'-o')#,color=myPalette2[idx],alpha=1,lw=2)
+    plt.plot(np.log10(dilutionODs),pNot_eff,'-',color=thisColor)
+    plt.show()
+    #plotGFP()   
+    
+    plt.ylim(-0.1,1.1)#np.min(FitYG)*0.1
+    #plt.xlim(-4,-0.5)
+    plt.legend(ODtots, title='total OD',bbox_to_anchor =(1.45, 1.04))
+    plt.xlabel('dilution OD (shared alpha)')
+    plt.ylabel('fraction of cells not transformed')
+    plt.title('resource competition model')
+    plt.show()
+
+
+
+#%% MODIFIED MACARTHUR FOR A SINGLE STRAIN
+
+ODdils = [0.001,0.002,0.005,0.01,0.025,0.05,0.1,0.5,1,2,3,4]
+#ODdils = [0.002,0.01,0.1,0.1]
+
+# m = 0.0025 # rate of cell death
+# c = 0.07 # rate of consumption of the resource by either strain
+# E = 0.1 #  efficiency of converting one unit of resource into one cell
+# r = 0.1 # basal rate of production of the resource by the host
+# K = 0.35 # carrying capacity of the resource
+# Ro = 0.35
+m = 0.0015 # rate of cell death
+c = 0.1 # rate of consumption of the resource by either strain
+E = 0.1 #  efficiency of converting one unit of resource into one cell
+r = 0.2 # basal rate of production of the resource by the host
+K = 0.15 # carrying capacity of the resource
+Ro = 0.15
+
+# define simulation parameters
+dt = 0.5#1/np.min([c,k,g])/10 # absolute duration of the time step
+TotalTime = 5000
+Ntime = int(TotalTime/dt)
+tVector = np.arange(0,TotalTime,dt)
+tVectorAbs = np.arange(0,Ntime,1)*dt
+foldGrowth = np.empty(len(ODdils))
+foldGrowth[:] = np.nan
+
+ODdils2 = [x for x in ODdils if x<= ODtot]
+for i, ODi in enumerate(ODdils2):
+    print(j)
+    # define the model parameters
+    Xo = ODi# initial abundance of cells X, the outcompeted strain
+    NX = np.zeros(Ntime) # for strain x
+    NR = np.zeros(Ntime) # for the resource r        
+    # initialize the simulation
+    NX[0] = Xo
+    NR[0] = Ro
+    
+    for t in range(1,Ntime): # loop over time with the exception of the first time point whcih we initialized already        
+        dX = dt * (c*E*NR[t-1]*NX[t-1] - m*NX[t-1])
+        dR = dt * (r*NR[t-1]*((K-NR[t-1])/K) - c*NR[t-1]*NX[t-1])
+        
+        NX[t] = NX[t-1] + dX
+        NR[t] = NR[t-1] + dR
+        
+    tPoint = 1000
+    fig, ax = plt.subplots()
+    fig.set_size_inches(2, 2)
+    plt.plot(tVectorAbs,NX,'r-')
+    plt.plot(tVectorAbs,NR,'k-')
+    #plt.plot([tPoint,tPoint],[NX[tVectorAbs==tPoint],10**-5],'b--')
+    plt.legend(['X','R'])
+    plt.xscale('log')
+    plt.yscale('log')
+    #plt.ylim(10**-6,5)
+    plt.title('ODtot = '+str(ODtot) + '; ODdil = ' + str(Xo))
+    
+    foldGrowth[i] = NX[-1]#NX[-1]
+    
+    
+    
+        
+fig2, ax = plt.subplots()
+fig2.set_size_inches(2, 2)
+plt.plot(ODdils,foldGrowth.transpose(),'-o')
+plt.plot([0.35, 0.35],[np.nanmin(foldGrowth.transpose()),np.nanmax(foldGrowth.transpose())])
+#plt.plot(ODdils,ODdils,'k--')
+plt.legend(['single strain','saturation OD','x=y'])
+plt.ylabel('simulated final OD')
+plt.xlabel('infiltration OD') 
+plt.xscale('log')
+plt.yscale('log')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

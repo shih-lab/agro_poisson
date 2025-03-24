@@ -1,0 +1,1248 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Nov 19 08:53:58 2023
+
+@author: simon_alamos
+"""
+
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+import scipy as scipy
+from scipy import optimize
+from scipy.stats import iqr
+from scipy.special import comb
+
+from lmfit import minimize, Parameters, report_fit
+
+
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+
+#%% load data
+
+# load the experiment_database spreadsheet
+print('navigate to the folder where the experiment database file is stored - then select any file')
+file_path = filedialog.askopenfilename() # store the file path as a string
+lastFileSep = file_path.rfind(filesep) # find the position of the last path separator
+folderpath = file_path[0:lastFileSep] # get the part of the path corresponding to the folder where the chosen file was located
+experiment_database_filePath = folderpath + filesep + 'experiment_database.csv'
+experiment_database = pd.read_csv(experiment_database_filePath)
+
+# select which experiments to aggregate. Refer to 'experiment_database' spreadsheet for more info
+experimentIDs = ['1','2','3','4','5','6','9','12','14','17']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+ODdilution_exp_database = experiment_database[condition]
+#initialize a dataframe to store values
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+ODdata = pd.DataFrame([], columns=cols)
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in ODdilution_exp_database['Experiment_ID'].values:
+    thisExperiment = ODdilution_exp_database[ODdilution_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    ODdata = pd.concat([ODdata,expCountsData])
+# convert the counts to int64
+ODdata = ODdata.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+
+ODdata['ODoneStrain'] = ODdata['OD']/2 # this is the OD of 1/2 of the labeled bacteria.
+ODdata['log10_ODoneStrain'] = np.log10(ODdata['ODoneStrain'])
+# since the labeled GFP and RFP strains are infiltrated at the same OD, this is the OD of each labeled strain
+
+fractionTransformable = 0.45
+
+ODdata['fracGFP'] = ODdata['NGFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracGFP'].loc[ODdata['fracGFP']>1]=1
+ODdata['fracRFP'] = ODdata['NRFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracRFP'].loc[ODdata['fracRFP']>1]=1
+ODdata['NotGFP'] = 1 - ODdata['fracGFP']
+ODdata['NotRFP'] = 1 - ODdata['fracRFP']
+
+
+#%% define functions
+
+def strainCompetition(XODvals,YODvals,Ro,k,timeboxes):
+    effectiveXODvals = np.zeros(len(XODvals))
+    XbFrac = np.zeros(len(YODvals))
+    
+    fig, ax = plt.subplots()
+    fig.set_size_inches(2, 2)
+    for i, Yo in enumerate(YODvals): #loop over the different ODs
+        X = np.zeros(len(timeboxes))
+        X[0] = XODvals[i]
+    
+        R = np.zeros(len(timeboxes))
+        R[0] = Ro
+        
+        Y = np.zeros(len(timeboxes))
+        Y[0] = Yo
+        
+        Xb = np.zeros(len(timeboxes))
+        Yb = np.zeros(len(timeboxes))
+        
+        # run the dynamical system simulation
+        for idx, t in enumerate(timeboxes[0:-1]):
+            idx = idx+1
+            dR = -R[idx-1] * k * (X[idx-1]*Y[idx-1])
+            R[idx] = R[idx-1] + dR
+            
+            dX = -R[idx-1]* k * X[idx-1]
+            X[idx] = X[idx-1] + dX
+        
+            dY = -R[idx-1]* k * Y[idx-1]
+            Y[idx] = Y[idx-1] + dY
+            
+            dXb = R[idx-1] * X[idx-1] * k
+            Xb[idx] = Xb[idx-1] + dXb
+            
+            dYb = R[idx-1] * Y[idx-1] * k    
+            Yb[idx] = Yb[idx-1] + dYb
+            
+        XbFrac[i] = Xb[-1]/X[0] 
+            
+        effectiveXODvals[i] = Xb[-1] # the last timepoint
+        
+        plt.plot(Xb)
+    
+    return effectiveXODvals
+
+
+def RevstrainCompetition(XODvals,YODvals,Ro,k1,k2,timeboxes):
+    effectiveXODvals = np.zeros(len(XODvals))
+    XbFrac = np.zeros(len(YODvals))
+    
+    fig, ax = plt.subplots()
+    fig.set_size_inches(2, 2)
+    for i, Yo in enumerate(YODvals): #loop over the different ODs
+        X = np.zeros(len(timeboxes))
+        X[0] = XODvals[i]
+    
+        R = np.zeros(len(timeboxes))
+        R[0] = Ro
+        
+        Y = np.zeros(len(timeboxes))
+        Y[0] = Yo
+        
+        Xb = np.zeros(len(timeboxes))
+        Yb = np.zeros(len(timeboxes))
+        
+        # run the dynamical system simulation
+        for idx, t in enumerate(timeboxes[0:-1]):
+            idx = idx+1
+            dR = -R[idx-1] * k1 * (X[idx-1]*Y[idx-1]) + k2*Xb[idx-1] + k2*Yb[idx-1]
+            R[idx] = R[idx-1] + dR
+            
+            dX = -R[idx-1]* k1 * X[idx-1] + k2*Xb[idx-1]
+            X[idx] = X[idx-1] + dX
+        
+            dY = -R[idx-1]* k1 * Y[idx-1]+ k2*Yb[idx-1]
+            Y[idx] = Y[idx-1] + dY
+            
+            dXb = R[idx-1] * X[idx-1] * k1 - k2*Xb[idx-1]
+            Xb[idx] = Xb[idx-1] + dXb
+            
+            dYb = R[idx-1] * Y[idx-1] * k1 - k2*Yb[idx-1]    
+            Yb[idx] = Yb[idx-1] + dYb
+            
+        XbFrac[i] = Xb[-1]/X[0] 
+            
+        effectiveXODvals[i] = Xb[-1] # the last timepoint
+        
+        plt.plot(Xb)
+    
+    return effectiveXODvals
+
+
+def fractionNotTransformed(dilutionOD,  alpha): 
+    # dilutionOD = the OD of the culture that we're diluting, the one with the nuclear tag
+    # NotTransf = our Y values, the fraction of cells that are not transformed (in log scale)
+    # alpha = a sclaing factor to go from OD to poisson probability   
+    NotTransfP = np.exp(-alpha * dilutionOD) # Poisson probability of zero successes
+    return NotTransfP
+
+def Transformed(dilutionOD,  alpha): 
+    # dilutionOD = the OD of the culture that we're diluting, the one with the nuclear tag
+    # NotTransf = our Y values, the fraction of cells that are not transformed (in log scale)
+    # alpha = a sclaing factor to go from OD to poisson probability   
+    TransfP = 1- np.exp(-alpha * dilutionOD) # Poisson probability of zero successes
+    return TransfP
+
+
+def plotGFP():
+    myPalette3 = ['khaki','limegreen','mediumturquoise','cornflowerblue','mediumorchid','firebrick']
+    for idx, ODtot in enumerate(ODtots):
+        thisColor = myPalette3[idx]
+        thisMarker = markers[idx]
+        ThisODdata = ODdata[ODdata['ODtot']==ODtot]
+        
+        #remove the ODtot = 0.2 that I had included in the ODtot=0.1 experiment
+        if ODtot == 0.1:
+            ThisODdata = ThisODdata[ThisODdata.OD != 0.2]       
+        #remove the ODtot = 1 that I had included in the ODtot=0.5 experiment
+        if ODtot == 0.5:
+            ThisODdata = ThisODdata[ThisODdata.OD != 1] 
+        
+        # ThisODdata['NotGFP'] = 1 - ThisODdata['fracGFP']
+        # ThisODdata['NotRFP'] = 1 - ThisODdata['fracRFP']
+        ThisODdata['ODoneStrain'] = ThisODdata['OD']/2
+        FitX = ThisODdata['ODoneStrain'] # ****  IMPORTANT!  ***** the OD in the dataframe is the mix of green and red strains
+        FitYG = ThisODdata['fracGFP']
+        # FitYR = ThisODdata['NotRFP']
+        xForFit_cont = np.logspace(-3.5,-0.2,100) # dense OD values for plotting purposes
+        
+        #perform the Poisson fit for GFP
+        FitBounds = (-100,100) # lower and upper bounds for alpha
+        poptG, pcov = scipy.optimize.curve_fit(Transformed, FitX, FitYG, bounds = FitBounds)
+        fit_alphaG = poptG[0]
+        alphaG_error = np.round(np.sqrt(np.diag(poptG))[0][0],1)
+        fitYG = Transformed(FitX, fit_alphaG)
+        fitY_contG = Transformed(xForFit_cont, fit_alphaG)
+        
+        # calculate the means for plotting
+        MeanPerOD = ThisODdata.groupby(by=["ODoneStrain"]).mean()
+        SDPerOD = ThisODdata.groupby(by=["ODoneStrain"]).sem()
+        NotGFPMeanPerOD = MeanPerOD['fracGFP']
+        # NotRFPMeanPerOD = MeanPerOD['NotRFP']
+        NotGFPSDPerOD = SDPerOD['fracGFP']
+        # NotRFPSDPerOD = SDPerOD['NotRFP']
+        ODvals = MeanPerOD.index
+        
+        # now do the plotting itself
+        #plt.plot(np.log10(xForFit_cont),fitY_contG,'-',lw=1.5,color=thisColor)
+        #plt.plot(np.log10(xForFit_cont),fitY_contG,'-',lw=1.5,color=thisColor, label='_nolegend_')
+        #plt.errorbar(np.log10(ODvals),NotGFPMeanPerOD,NotGFPSDPerOD, fmt="o", color="k",mfc = thisColor, mec='black', ms=5)
+        plt.errorbar(np.log10(ODvals),NotGFPMeanPerOD,NotGFPSDPerOD, fmt="o", color=thisColor,mfc = thisColor, mec='black',marker=thisMarker,ms=5,mew=0.5)
+    
+    
+    
+def getRsquared(ydata, fittedY):
+    # can get the residual sum of squares 
+    residuals = ydata - fittedY
+    ss_res = np.sum(residuals**2)
+    #  get the total sum of squares 
+    ss_tot = np.sum((ydata-np.mean(ydata))**2)
+    # get the R squared value
+    r_squared = 1 - (ss_res / ss_tot)
+    
+    return r_squared
+    
+
+#%% a more reasonable loop of the same
+
+ODdils_cont = np.array([0.0005,0.001,0.0025,0.005,0.01,0.025, 0.05, 0.1, 0.25, 0.5, 1, 1.5]) # the dilution ODs of one of the reporter strains
+#ODdils_cont = np.logspace(-3.5,0.5,35)
+#XoVals = np.logspace(np.log10(0.001),np.log10(2),10)
+k1 = 0.1 #rate for going from X to Xb
+k2 = 0 #rate for going from Xb to X # 0.000001
+Ro = 0.4 #initial resources
+timeboxes = np.arange(1,30000)
+#ODtots = np.logspace(np.log10(Xo),np.log10(2),10)
+ODtots = np.array([0.05,0.1,0.5,1,2, 3])
+
+# fig, ax = plt.subplots()
+# fig.set_size_inches(2, 2)
+
+# #to store 'effective X' across X dilutions (columns), across all OD tots (rows)
+# XbValues = np.zeros([len(ODtots),len(ODdils)])
+
+# initialize list of lists 
+# data = [[3, 2], [3, 1], [3, 0.5],[3, 0.1],[3, 0.05],[3, 0.02],[3, 0.01],[3, 0.005],[3, 0.002],[3, 0.001],
+#         [2, 2], [2, 1], [2, 0.5],[2, 0.1],[2, 0.05],[2, 0.02],[2, 0.01],[2, 0.005],[2, 0.002],[2, 0.001],
+#         [1, 1], [1, 0.5],[1, 0.1],[1, 0.05],[1, 0.02],[1, 0.01],[1, 0.005],[1, 0.002],[1, 0.001],
+#         [0.5, 0.5],[0.5, 0.1],[0.5, 0.05],[0.5, 0.02],[0.5, 0.01],[0.5, 0.005],[0.5, 0.002],[0.5, 0.001],
+#         [0.1, 0.1],[0.1, 0.05],[0.1, 0.02],[0.1, 0.01],[0.1, 0.005],[0.1, 0.002],[0.1, 0.001],
+#         [0.05, 0.05],[0.05, 0.02],[0.05, 0.01],[0.05, 0.005],[0.05, 0.001]] 
+# # Create the pandas DataFrame 
+# df = pd.DataFrame(data, columns=['ODtot', 'ODdil']) 
+# df['ODeff'] = np.nan
+
+BoundCells = np.empty((len(ODtots),len(ODdils_cont)))
+BoundCells[:] = np.nan
+
+for i, ODtot in enumerate(ODtots):
+    #ODdils2 = ODdils[ODdils<=ODtot]
+    ODdils_cont2 = ODdils_cont[ODdils_cont<=ODtot]
+    for j, Xo in enumerate(ODdils_cont2):
+        Yo = ODtot-Xo
+        # now run the simulation
+        # create vectors to store values over time
+        R = np.zeros(len(timeboxes))
+        X = np.zeros(len(timeboxes))
+        Y = np.zeros(len(timeboxes))
+        Xb = np.zeros(len(timeboxes))
+        Yb = np.zeros(len(timeboxes))
+        # initialize the arrays with the initial values
+        R[0] = Ro
+        X[0] = Xo
+        Y[0] = Yo   
+        # Xbo = 0
+        # Ybo = 0
+        # run the actual simulation
+        # the result we want is the number (OD) of Xb at the end
+        for idx, t in enumerate(timeboxes[0:-1]):
+            idx = idx+1
+            dR = -R[idx-1]*k1*X[idx-1] - R[idx-1]*k1*Y[idx-1] + k2*Xb[idx-1] + k2*Yb[idx-1]
+            R[idx] = R[idx-1] + dR
+            #print(dR)
+            
+            dX = -R[idx-1]*k1*X[idx-1] + k2*Xb[idx-1]
+            X[idx] = X[idx-1] + dX
+            
+            dY = -R[idx-1]*k1*Y[idx-1]+ k2*Yb[idx-1]
+            Y[idx] = Y[idx-1] + dY
+            
+            dXb = R[idx-1]*X[idx-1]*k1 - k2*Xb[idx-1]
+            Xb[idx] = Xb[idx-1] + dXb
+            
+            dYb = R[idx-1]*Y[idx-1]*k1 - k2*Yb[idx-1]    
+            Yb[idx] = Yb[idx-1] + dYb
+            
+        BoundCells[i,j] = Xb[-1]
+        fig, ax = plt.subplots()
+        fig.set_size_inches(2, 2)
+        plt.plot(Xb)
+        plt.xscale('log')
+        plt.ylabel('Xb/Xo')
+
+#%%
+myPalette2 = cm.viridis(np.linspace(0, 1, len(ODtots)))
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+
+for idx, ODtot in enumerate(ODtots):
+    thisColor = myPalette2[idx]
+    effectiveOD = BoundCells[idx,:]
+    plt.plot(ODdils_cont,effectiveOD,'-o',mfc =thisColor, color=thisColor,alpha=1,lw=2)
+    
+#plt.plot(ODdils_cont,ODdils_cont,'k--')
+plt.xscale('log')
+plt.yscale('log')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1, 1.04))
+plt.xlabel('dilution OD')
+plt.ylabel('effectiveOD (bound cells)')
+plt.title('resource competition model')
+plt.show()
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+alpha = 100
+markers = ['o','s','^','d','v','<']
+palette = cm.YlGn(np.linspace(0, 1, len(ODtots)))
+myPalette3 = ['khaki','limegreen','mediumturquoise','cornflowerblue','mediumorchid','firebrick']
+
+for idx, ODtot in enumerate(ODtots):
+    effectiveOD = BoundCells[idx,:]
+    pNot = fractionNotTransformed(effectiveOD,  alpha)
+    pTrans = Transformed(effectiveOD,  alpha)
+    plt.plot(np.log10(ODdils_cont),pTrans,'-',color=myPalette3[idx])
+plotGFP()
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+#ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.ylim(-0.1,1.1)#np.min(FitYG)*0.1
+plt.xlim(-3.5,0.4)
+plt.grid('major')
+#plt.xscale('log')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1.45, 1.04))
+plt.xlabel('log_{10} dilution OD')
+plt.ylabel('fraction of cells not transformed')
+plt.title('resource competition model')
+#plt.xticks(rotation=45)
+plt.show()
+
+
+            
+m = -0.8734228752402693 #this is for GFP
+scalingFactor = np.exp(m*ODtot)
+myPalette2 = cm.viridis(np.linspace(0, 1, len(ODtots)))
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+
+for idx, ODtot in enumerate(ODtots):
+    thisColor = myPalette3[idx]
+    scalingFactor = np.exp(m*ODtot)
+    effectiveOD = BoundCells[idx,:]
+    scaledOD = ODdils_cont * scalingFactor
+    plt.plot(scaledOD,effectiveOD,'-o',mfc =thisColor, color=thisColor,alpha=1,lw=2)
+plt.xscale('log')
+plt.yscale('log')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1, 1.04))
+plt.xlabel('dilution OD')
+plt.ylabel('rescaled OD \n based on alpha as a functon of ODtot')
+plt.title('resource competition model')
+plt.show()
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+alpha = 100
+markers = ['o','s','^','d','v','<']
+palette = cm.YlGn(np.linspace(0, 1, len(ODtots)))
+alphas = [100, 95, 50, 30, 17, 8]
+
+for idx, ODtot in enumerate(ODtots):
+    thisAlpha = alphas[idx]
+    effectiveOD = BoundCells[idx,:]
+    pNot = fractionNotTransformed(ODdils_cont,  thisAlpha)
+    
+    plt.plot(effectiveOD,pNot,linestyle='-',color=myPalette3[idx])#,color=myPalette2[idx],alpha=1,lw=2)
+    
+plt.xscale('log')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1.35, 1.04))
+plt.xlabel('effective dilution OD \n i.e. OD of bound cells (same alpha)')
+plt.ylabel('fraction of cells not transformed')
+plt.title('resource competition model')
+plt.show()
+
+
+# plot -for a given GFP OD- the bound cells as a function fo total OD
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+infODindex = 14
+for idx, ODtot in enumerate(ODtots):
+    thisColor = myPalette3[idx]
+    effectiveOD= BoundCells[idx,infODindex]
+    plt.plot(ODtot,effectiveOD,'-o',mfc =thisColor, color=thisColor,alpha=1,lw=2)
+#plt.xscale('log')
+#plt.yscale('log')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1, 1.04))
+plt.xlabel('total OD')
+plt.ylabel('effective OD')
+plt.title('resource competition model \n constant GFP infiltration OD = ' + str(np.round(ODdils_cont2[infODindex],3)))
+plt.show()
+
+
+#%% calculate R squared for the fit
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+alldata = []
+allprediction = []
+for idx, ODtot in enumerate(ODtots):
+    thisColor = myPalette3[idx]
+    # calculate the prediction for this ODtot
+    effectiveOD = BoundCells[idx,:]
+    #pNot = fractionNotTransformed(effectiveOD,  alpha)
+    prediction = Transformed(effectiveOD,  alpha) # the actual prediction
+    prediction = prediction[~np.isnan(prediction)]
+    
+    # grab the data for this ODtot
+    ThisODdata = ODdata[ODdata['ODtot']==ODtot]
+    MeanPerOD = ThisODdata.groupby(by=["ODoneStrain"]).mean()
+    data = MeanPerOD['fracGFP']
+    data = data.reset_index()
+    a = data['ODoneStrain']
+    b = ODdils_cont
+    testedprediction = np.where(np.in1d(b, a))[0]
+    idx = np.searchsorted(data['ODoneStrain'],ODdils_cont)
+    plt.plot(data['fracGFP'],prediction[testedprediction],'-o',color=thisColor)
+    
+    #
+    alldata = np.append(alldata, data['fracGFP'].values ,axis=0)
+    allprediction = np.append(allprediction, prediction[testedprediction] ,axis=0)
+    #calculate the distance from the data to the prediction
+    #np.sum((data['fracGFP'] - prediction[testedprediction])**2)
+plt.xlabel('data')
+plt.ylabel('model prediction')
+        
+SSR = np.sum((alldata - allprediction)**2)   
+SST =  np.sum((alldata - np.mean(alldata))**2) 
+Rsq = 1 - (SSR/SST)  
+print(Rsq)
+
+
+
+
+
+
+
+
+#%% now for a single strain that gets titrated without a second competitor strain
+
+ODdils = [0.01,0.025,0.05,0.1,0.5,1,2,3]
+ODdils_cont = np.array([0.01,0.02, 0.05, 0.1, 0.25, 0.5, 1, 2, 3])
+#XoVals = np.logspace(np.log10(0.001),np.log10(2),10)
+k1 = 0.5 #rate for going from X to Xb
+k2 = 0.02 #rate for going from Xb to X # 0.000001
+Ro = 0.45 #initial resources
+timeboxes = np.arange(1,30000)
+XbValues = np.zeros([len(ODtots),len(ODdils)])
+BoundCells = np.zeros(len(ODdils_cont))
+
+for i, ODi in enumerate(ODdils_cont):
+    print(j)
+    # now run the simulation
+    # create vectors to store values over time
+    R = np.zeros(len(timeboxes))
+    X = np.zeros(len(timeboxes))
+    Xb = np.zeros(len(timeboxes))
+    # initialize the arrays with the initial values
+    R[0] = Ro
+    X[0] = ODi
+
+    # run the actual simulation
+    # the result we want is the number (OD) of Xb at the end
+    for idx, t in enumerate(timeboxes[0:-1]):
+        idx = idx+1
+        dR = -R[idx-1]*k1*X[idx-1] + k2*Xb[idx-1]
+        
+        R[idx] = R[idx-1] + dR
+        #print(dR)
+        
+        dX = -R[idx-1]*k1*X[idx-1] + k2*Xb[idx-1]
+        X[idx] = X[idx-1] + dX
+                
+        dXb = R[idx-1]*X[idx-1]*k1 - k2*Xb[idx-1]
+        Xb[idx] = Xb[idx-1] + dXb
+
+    BoundCells[i] = Xb[-1]#NX[-1]
+    
+    
+    
+        
+fig2, ax = plt.subplots()
+fig2.set_size_inches(2, 2)
+plt.plot(ODdils_cont,BoundCells,'-')
+plt.plot([Ro,Ro],[np.nanmin(BoundCells),np.nanmax(BoundCells)])
+#plt.plot(ODdils,ODdils,'k--')
+plt.legend(['single strain','saturation OD','x=y'])
+plt.ylabel('simulated final OD')
+plt.xlabel('infiltration OD') 
+plt.xscale('log')
+plt.yscale('log')
+
+
+
+
+#%% plot model and data
+
+ODtots = [0.05, 0.1, 0.5, 2]
+myPalette3 = cm.viridis(np.linspace(0, 1, len(ODtots)))
+fig, ax = plt.subplots()
+fig.set_size_inches(3, 2)
+for idx, ODtot in enumerate(ODtots):
+    ThisODdata = ODdata[ODdata['ODtot']==ODtot]  
+    #remove the ODtot = 0.2 that I had included in the ODtot=0.1 experiment
+    if ODtot == 0.1:
+        ThisODdata = ThisODdata[ThisODdata.OD != 0.5]   
+    #remove the ODtot = 1 that I had included in the ODtot=0.5 experiment
+    if ODtot == 0.5:
+        ThisODdata = ThisODdata[ThisODdata.OD != 2]
+        
+    ThisODdata['fracNotGFP'] = 1 - ThisODdata['fracGFP']
+    # calculate the means for plotting
+    MeanPerOD = ThisODdata.groupby(by=["ODoneStrain"]).mean()
+    SDPerOD = ThisODdata.groupby(by=["ODoneStrain"]).sem()
+    NotGFPMeanPerOD = MeanPerOD['fracNotGFP']
+    NotGFPSDPerOD = SDPerOD['fracNotGFP']
+    ODvals = MeanPerOD.index
+
+    #sns.scatterplot(data=ThisODdata, x="OD", y="fracNotGFP",marker='o',color=palette[idx],alpha = 0.4,s=55)
+    plt.errorbar(ODvals,NotGFPMeanPerOD,NotGFPSDPerOD, fmt="o", color='k', mfc=myPalette3[idx],mec='k', ms=5, capsize= None)
+    
+    datadf = df[df['ODtot']==ODtot]
+    dilutionOD = datadf['ODdil']
+    effectiveOD = datadf['ODeff']
+    pNot = fractionNotTransformed(effectiveOD,  alpha)
+    plt.plot(dilutionOD,pNot,'--', color=myPalette3[idx],alpha=1,lw=2)
+    
+plt.xscale('log')
+plt.xlabel('labeled strain dilution OD')
+plt.ylabel('fraction of cells not transformed')
+plt.title('resource competition model vs data')
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1.35, 1.04))
+plt.show()
+
+
+
+#%%
+Nstrains = 13
+ODtot = 0.5
+ODdil = ODtot/Nstrains
+alpha = 50
+M = -0.87
+
+def pAtLeastOnece(ODtot, ODdil, alpha, M):
+    ODeff = ODdil * np.exp(M*ODtot)
+    gamma = alpha * ODeff
+    p = 1 - np.exp(-gamma)
+    return p
+
+def PallNStrains(ODtot, ODdil, alpha, M,N):
+    pAllN = np.power(pAtLeastOnece(ODtot, ODdil, alpha, M),N)
+    return pAllN
+
+
+ODtots = [0.05, 0.1, 0.5, 1, 2]
+#ODtots = np.logspace(-2,np.log10(2))
+Numstrains = np.arange(14)+1
+probMatrix = np.zeros([len(Numstrains),len(ODtots)])
+for i, N in enumerate(Numstrains):
+    for j, ODtot in enumerate(ODtots):
+        ODdil = ODtot/N
+        PallStrains = PallNStrains(ODtot, ODdil, alpha, M, N)
+        probMatrix[i,j] = PallStrains
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(probMatrix,'-o',ms=4)
+plt.legend(ODtots, title='total OD',bbox_to_anchor =(1, 1.04))
+plt.xlabel('number of strains')
+plt.ylabel('probability of cells \n transformed by all strains')
+plt.yscale('log')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2.5, 2)        
+plt.plot(ODtots,probMatrix[-1,:],'-')
+#plt.legend(ODtots, title='total OD',bbox_to_anchor =(1, 1.04))
+plt.xlabel('total OD')
+plt.xscale('log')
+plt.yscale('log')
+plt.ylabel('probability of cells \n transformed by 14 strains')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2.5, 2)
+for idx, N in enumerate(Numstrains):   
+    plt.plot(ODtots,probMatrix[idx,:],'-')
+#plt.legend(ODtots, title='total OD',bbox_to_anchor =(1, 1.04))
+plt.xlabel('total OD')
+plt.xscale('log')
+# plt.yscale('log')
+plt.legend(Numstrains, title='number of strains',bbox_to_anchor =(1, 1.04))
+plt.ylabel('probability of cells \n transformed by N strains')
+
+
+# #%% reversible binding does not lead to nonlinearities either
+
+# k1 = 0.05 
+# k2 = 0.001
+# Ro = 0.00001
+# Xo = 0.01
+# Yo = 0.99
+# Xbo = 0
+# Ybo = 0
+# timeboxes = np.arange(1,100000)
+# R = np.zeros(len(timeboxes))
+# R[0] = Ro
+# X = np.zeros(len(timeboxes))
+# X[0] = Xo
+# Y = np.zeros(len(timeboxes))
+# Y[0] = Yo
+# Xb = np.zeros(len(timeboxes))
+# Yb = np.zeros(len(timeboxes))
+
+# for idx, t in enumerate(timeboxes[0:-1]):
+#     idx = idx+1
+#     dR = -R[idx-1] * k1 * (X[idx-1]*Y[idx-1]) + k2*Xb[idx-1] + k2*Yb[idx-1]
+#     R[idx] = R[idx-1] + dR
+    
+#     dX = -R[idx-1]* k1 * X[idx-1] + k2*Xb[idx-1]
+#     X[idx] = X[idx-1] + dX
+
+#     dY = -R[idx-1]* k1 * Y[idx-1]+ k2*Yb[idx-1]
+#     Y[idx] = Y[idx-1] + dY
+    
+#     dXb = R[idx-1] * X[idx-1] * k1 - k2*Xb[idx-1]
+#     Xb[idx] = Xb[idx-1] + dXb
+    
+#     dYb = R[idx-1] * Y[idx-1] * k1 - k2*Yb[idx-1]    
+#     Yb[idx] = Yb[idx-1] + dYb
+
+# fig, ax = plt.subplots()
+# fig.set_size_inches(2, 2)    
+# plt.plot(timeboxes,X,'r-')
+# plt.plot(timeboxes,Xb,'r--')
+# plt.plot(timeboxes,Y,'g-')
+# plt.plot(timeboxes,Yb,'g--')
+
+# print(Xb[-1]/X[0])
+# print(Yb[-1]/Y[0])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# #%% fit data to model
+
+# # organize the data to make it digestible by fitting functions
+
+# # prepare the data into the right shape
+# FP = 'RFP' # pick an FP
+# FPFraction = 'frac' + FP
+# FractionGFP005 = ODdata[FPFraction].loc[ODdata['ODtot']==0.05].values
+# ODs005 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==0.05].values
+# FractionGFP01 = ODdata[FPFraction].loc[ODdata['ODtot']==0.1].values
+# ODs01 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==0.1].values
+# FractionGFP1 = ODdata[FPFraction].loc[ODdata['ODtot']==1].values
+# ODs1 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==1].values
+# FractionGFP05 = ODdata[FPFraction].loc[ODdata['ODtot']==0.5].values
+# ODs05 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==0.5].values
+# FractionGFP2 = ODdata[FPFraction].loc[ODdata['ODtot']==2].values
+# ODs2 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==2].values
+# FractionGFP3 = ODdata[FPFraction].loc[ODdata['ODtot']==3].values
+# ODs3 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==3].values
+
+# # they don't all have the same size, but this is important for the fitting functions
+# # so I'll pad with NANs
+# longestDataset = np.max([len(FractionGFP005),len(FractionGFP01),len(FractionGFP05),len(FractionGFP1),len(FractionGFP2),len(FractionGFP3)])
+
+# pad005 = np.nan*np.ones(longestDataset-len(FractionGFP005))
+# FractionGFP005 = np.concatenate((FractionGFP005,pad005))
+# ODs005 = np.concatenate((ODs005,pad005))
+
+# pad01 = np.nan*np.ones(longestDataset-len(FractionGFP01))
+# FractionGFP01 = np.concatenate((FractionGFP01,pad01))
+# ODs01 = np.concatenate((ODs01,pad01))
+
+# pad05 = np.nan*np.ones(longestDataset-len(FractionGFP05))
+# FractionGFP05 = np.concatenate((FractionGFP05,pad05))
+# ODs05 = np.concatenate((ODs05,pad05))
+
+# pad1 = np.nan*np.ones(longestDataset-len(FractionGFP1))
+# FractionGFP1 = np.concatenate((FractionGFP1,pad1))
+# ODs1 = np.concatenate((ODs1,pad1))
+
+# pad2 = np.nan*np.ones(longestDataset-len(FractionGFP2))
+# FractionGFP2 = np.concatenate((FractionGFP2,pad2))
+# ODs2 = np.concatenate((ODs2,pad2))
+
+# pad3 = np.nan*np.ones(longestDataset-len(FractionGFP3))
+# FractionGFP3 = np.concatenate((FractionGFP3,pad3))
+# ODs3 = np.concatenate((ODs3,pad3))
+
+# TitrationODvals = []
+# TitrationODvals.append(ODs005)
+# TitrationODvals.append(ODs01)
+# TitrationODvals.append(ODs05)
+# TitrationODvals.append(ODs1)
+# TitrationODvals.append(ODs2)
+# TitrationODvals.append(ODs3)
+# TitrationODvals = np.array(TitrationODvals)
+
+# dataGFP = []
+# dataGFP.append(FractionGFP005)
+# dataGFP.append(FractionGFP01)
+# dataGFP.append(FractionGFP05)
+# dataGFP.append(FractionGFP1)
+# dataGFP.append(FractionGFP2)
+# dataGFP.append(FractionGFP3)
+# dataGFP = np.array(dataGFP)
+
+# ODtotVals = [0.05,0.1,0.5,1,2,3]
+
+
+# # express model as a function that takes two free parameters, k and Ro and two imputs,
+# # a list of infiltration ODs and the total OD
+# def kineticCompetition(infODs,ODtot,k,Ro):
+#     print(ODtot)
+#     # k =  rate of consumption
+#     # Ro = concentration of the limiting resource
+#     # ODinf = the infiltration OD
+#     # ODtot = the total OD
+#     # returns the effective OD according to the kinetic competition model
+#     timeboxes = np.arange(1,1000)
+#     ODeff = np.empty(len(infODs))
+#     ODeff[:] = np.nan
+#     for j, Xo in enumerate(infODs):
+#         Yo = ODtot-Xo
+#         # now run the simulation
+#         # create vectors to store values over time
+#         R = np.zeros(len(timeboxes))
+#         X = np.zeros(len(timeboxes))
+#         Y = np.zeros(len(timeboxes))
+#         Xb = np.zeros(len(timeboxes))
+#         Yb = np.zeros(len(timeboxes))
+#         # initialize the arrays with the initial values
+#         R[0] = Ro
+#         X[0] = Xo
+#         Y[0] = Yo   
+#         # run the actual simulation
+#         # the result we want is the number (OD) of Xb at the end
+#         for idx, t in enumerate(timeboxes[0:-1]):
+#             idx = idx+1
+#             dR = -R[idx-1]*k1*X[idx-1] - R[idx-1]*k1*Y[idx-1] + k2*Xb[idx-1] + k2*Yb[idx-1]
+#             R[idx] = R[idx-1] + dR
+#             #print(dR)
+            
+#             dX = -R[idx-1]*k1*X[idx-1] + k2*Xb[idx-1]
+#             X[idx] = X[idx-1] + dX
+            
+#             dY = -R[idx-1]*k1*Y[idx-1]+ k2*Yb[idx-1]
+#             Y[idx] = Y[idx-1] + dY
+            
+#             dXb = R[idx-1]*X[idx-1]*k1 - k2*Xb[idx-1]
+#             Xb[idx] = Xb[idx-1] + dXb
+            
+#             dYb = R[idx-1]*Y[idx-1]*k1 - k2*Yb[idx-1]    
+#             Yb[idx] = Yb[idx-1] + dYb
+            
+#         ODeff[j] = Xb[-1]
+#     return ODeff
+    
+# # define the parameter handling function
+# def singleCell_dataset(params, i, infODs, ODtot):
+#     """Calculate effective OD from parameters for data set."""
+#     k = params[f'k_{i+1}']
+#     Ro = params[f'Ro_{i+1}']
+#     return kineticCompetition(infODs,ODtot,k,Ro)
+
+
+# # define the wrapper objective function 
+# def objectiveBinExp(params, x, data):
+#     """Calculate total residual for fits of Gaussians to several data sets."""
+#     ndata, _ = data.shape
+#     resid = 0.0*data[:]
+#     # make residual per data set
+#     for i in range(ndata):
+#         ODtot = ODtotVals[i]
+#         resid[i, :] = data[i, :] - singleCell_dataset(params, i, x, ODtot)
+#     # now flatten this to a 1D array, as minimize() needs
+#     return resid.flatten()
+
+
+# # run fitting of single cell transformation frequencies to Binomial model
+# fit_paramsBin = Parameters()
+
+# for iy, y in enumerate(dataGFP):
+#     fit_paramsBin.add(f'k_{iy+1}', value=0.2, min=0.1, max=3) # bounds for the number of 'chances' of transformation per cell
+#     fit_paramsBin.add(f'Ro_{iy+1}', value=10, min=3, max=30) # bounds for the number of AUs that each extra transformation event adds
+
+# for iy in (2, 3):
+#     fit_paramsBin[f'k_{iy}'].expr = 'k_1'
+#     fit_paramsBin[f'Ro_{iy}'].expr = 'Ro_1'
+    
+# outBin = minimize(objectiveBinExp, fit_paramsBin, args=(TitrationODvals[0,:], dataGFP),nan_policy='omit')
+# report_fit(outBin.params)
+# fittedODsat = np.round(outBin.params['k_1'].value,2)
+# fittedODsatError = np.round(outBin.params['k_1'].stderr,2)
+# fittedN = np.round(outBin.params['Ro_1'].value,2)
+# fittedNerror = np.round(outBin.params['Ro_1'].stderr,2)
+# fittedbeta = 1/fittedODsat
+
+#%% fit all data to model
+# prepare the data into the right shape
+FP = 'RFP' # pick an FP
+FPFraction = 'frac' + FP
+FractionGFP005 = ODdata[FPFraction].loc[ODdata['ODtot']==0.05].values
+ODs005 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==0.05].values
+FractionGFP01 = ODdata[FPFraction].loc[ODdata['ODtot']==0.1].values
+ODs01 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==0.1].values
+FractionGFP1 = ODdata[FPFraction].loc[ODdata['ODtot']==1].values
+ODs1 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==1].values
+FractionGFP05 = ODdata[FPFraction].loc[ODdata['ODtot']==0.5].values
+ODs05 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==0.5].values
+FractionGFP2 = ODdata[FPFraction].loc[ODdata['ODtot']==2].values
+ODs2 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==2].values
+FractionGFP3 = ODdata[FPFraction].loc[ODdata['ODtot']==3].values
+ODs3 = ODdata['ODoneStrain'].loc[ODdata['ODtot']==3].values
+
+# they don't all have the same size, but this is important for the fitting functions
+# so I'll pad with NANs
+longestDataset = np.max([len(FractionGFP005),len(FractionGFP01),len(FractionGFP05),len(FractionGFP1),len(FractionGFP2),len(FractionGFP3)])
+
+pad005 = np.nan*np.ones(longestDataset-len(FractionGFP005))
+FractionGFP005 = np.concatenate((FractionGFP005,pad005))
+ODs005 = np.concatenate((ODs005,pad005))
+
+pad01 = np.nan*np.ones(longestDataset-len(FractionGFP01))
+FractionGFP01 = np.concatenate((FractionGFP01,pad01))
+ODs01 = np.concatenate((ODs01,pad01))
+
+pad05 = np.nan*np.ones(longestDataset-len(FractionGFP05))
+FractionGFP05 = np.concatenate((FractionGFP05,pad05))
+ODs05 = np.concatenate((ODs05,pad05))
+
+pad1 = np.nan*np.ones(longestDataset-len(FractionGFP1))
+FractionGFP1 = np.concatenate((FractionGFP1,pad1))
+ODs1 = np.concatenate((ODs1,pad1))
+
+pad2 = np.nan*np.ones(longestDataset-len(FractionGFP2))
+FractionGFP2 = np.concatenate((FractionGFP2,pad2))
+ODs2 = np.concatenate((ODs2,pad2))
+
+pad3 = np.nan*np.ones(longestDataset-len(FractionGFP3))
+FractionGFP3 = np.concatenate((FractionGFP3,pad3))
+ODs3 = np.concatenate((ODs3,pad3))
+
+TitrationODvals = []
+TitrationODvals.append(ODs005)
+TitrationODvals.append(ODs01)
+TitrationODvals.append(ODs05)
+TitrationODvals.append(ODs1)
+TitrationODvals.append(ODs2)
+TitrationODvals.append(ODs3)
+TitrationODvals = np.array(TitrationODvals)
+
+dataGFP = []
+dataGFP.append(FractionGFP005)
+dataGFP.append(FractionGFP01)
+dataGFP.append(FractionGFP05)
+dataGFP.append(FractionGFP1)
+dataGFP.append(FractionGFP2)
+dataGFP.append(FractionGFP3)
+dataGFP = np.array(dataGFP)
+
+ODtotVals = [0.05,0.1,0.5,1,2,3]
+alpha = 100
+
+# define objective function 
+def BinomialProbability1(ODx,ODtot,Ro,k):
+    # ODx are the x values, the OD of the diluted strain
+    # Fy are the y values, the fraction of transformed cells
+    # ODtot is the total OD of the mix
+    # ODsat is the first constant we're trying to fit: the saturation OD
+    # N is the second constant we want to fit: the number of chances per plant cell   
+    beta = 1/Ro#proportionality constant to go from OD to probability   
+    # convert ODs to probability    
+    PlabeledStrain = ODx * beta
+    PdarkStrain = (ODtot - ODx) * beta
+    Ptrans = PlabeledStrain + PdarkStrain    
+    # adjust the probability to account for competition
+    if Ptrans[0] > 1:
+        PlabeledStrain = PlabeledStrain/Ptrans    
+    # now calculate the multinomial probability
+    PzeroSuccesses_LabeledStrain = (1 - PlabeledStrain)**k
+    PatleastOneSuccess_LabeledStrain = 1 - PzeroSuccesses_LabeledStrain
+    
+    return PatleastOneSuccess_LabeledStrain
+
+
+def BinomialProbability2(ODx,ODtot,Ro,k):
+    print(ODtot)
+    # k =  rate of consumption
+    # Ro = concentration of the limiting resource
+    # ODinf = the infiltration OD
+    # ODtot = the total OD
+    # returns the effective OD according to the kinetic competition model
+    timeboxes = np.arange(1,3000)
+    ODeff = np.empty(len(ODx))
+    ODeff[:] = np.nan
+    for j, Xo in enumerate(ODx):
+        Yo = ODtot-Xo
+        # now run the simulation
+        # create vectors to store values over time
+        R = np.zeros(len(timeboxes))
+        X = np.zeros(len(timeboxes))
+        Y = np.zeros(len(timeboxes))
+        Xb = np.zeros(len(timeboxes))
+        Yb = np.zeros(len(timeboxes))
+        # initialize the arrays with the initial values
+        R[0] = Ro
+        X[0] = Xo
+        Y[0] = Yo   
+        # run the actual simulation
+        # the result we want is the number (OD) of Xb at the end
+        for idx, t in enumerate(timeboxes[0:-1]):
+            idx = idx+1
+            dR = -R[idx-1]*k1*X[idx-1] - R[idx-1]*k1*Y[idx-1] + k2*Xb[idx-1] + k2*Yb[idx-1]
+            R[idx] = R[idx-1] + dR
+            #print(dR)
+            
+            dX = -R[idx-1]*k1*X[idx-1] + k2*Xb[idx-1]
+            X[idx] = X[idx-1] + dX
+            
+            dY = -R[idx-1]*k1*Y[idx-1]+ k2*Yb[idx-1]
+            Y[idx] = Y[idx-1] + dY
+            
+            dXb = R[idx-1]*X[idx-1]*k1 - k2*Xb[idx-1]
+            Xb[idx] = Xb[idx-1] + dXb
+            
+            dYb = R[idx-1]*Y[idx-1]*k1 - k2*Yb[idx-1]    
+            Yb[idx] = Yb[idx-1] + dYb
+            
+        ODeff[j] = Xb[-1]
+    FractionTransformed = Transformed(ODeff,  alpha)    
+    return FractionTransformed
+
+
+# define the parameter handling function
+def singleCell_dataset(params, i, x, ODtot):
+    """Calculate Binomial cell transformation fraction from parameters for data set."""
+    Ro = params[f'Ro_{i+1}']
+    k = params[f'k_{i+1}']
+    return BinomialProbability2(x, ODtot, Ro, k)
+
+# define the wrapper objective function 
+def objectiveBinExp(params, x, data):
+    """Calculate total residual for fits of Gaussians to several data sets."""
+    ndata, _ = data.shape
+    resid = 0.0*data[:]
+    # make residual per data set
+    for i in range(ndata):
+        ODtot = ODtotVals[i]
+        resid[i, :] = data[i, :] - singleCell_dataset(params, i, x, ODtot)
+    # now flatten this to a 1D array, as minimize() needs
+    return resid.flatten()
+
+# run fitting of single cell transformation frequencies to Binomial model
+fit_paramsBin = Parameters()
+
+for iy, y in enumerate(dataGFP):
+    fit_paramsBin.add(f'Ro_{iy+1}', value=0.35, min=0.1, max=1) # bounds for the number of 'chances' of transformation per cell
+    fit_paramsBin.add(f'k_{iy+1}', value=0.5, min=0.5, max=0.5) # bounds for the number of AUs that each extra transformation event adds
+
+for iy in (2,3,4,5,6):
+    fit_paramsBin[f'Ro_{iy}'].expr = 'Ro_1'
+    fit_paramsBin[f'k_{iy}'].expr = 'k_1'
+
+id = 0
+outBin = minimize(objectiveBinExp, fit_paramsBin, args=(TitrationODvals[id,:], dataGFP[id,:]),nan_policy='omit')
+#outBin = minimize(objectiveBinExp, fit_paramsBin, args=(TitrationODvals, dataGFP),nan_policy='omit')
+
+report_fit(outBin.params)
+
+
+#%% plot fit and data
+Ro = np.round(outBin.params['Ro_1'].value,2)
+k = np.round(outBin.params['k_1'].value,2)
+Ro = 0.35
+k = 1
+xforfit = np.logspace(-3.5,0.5,30)
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2) 
+
+y005 = BinomialProbability2(xforfit,0.05,Ro,k)
+plt.plot(np.log10(xforfit),y005,'-',color='khaki')
+
+y01 = BinomialProbability2(xforfit,0.1,Ro,k)
+plt.plot(np.log10(xforfit),y01,'-',color='limegreen')
+
+y05 = BinomialProbability2(xforfit,0.5,Ro,k)
+plt.plot(np.log10(xforfit),y05,'-',color='mediumturquoise')
+
+y1 = BinomialProbability2(xforfit,1,Ro,k)
+plt.plot(np.log10(xforfit),y1,'-',color='cornflowerblue')
+
+y2 = BinomialProbability2(xforfit,2,Ro,k)
+plt.plot(np.log10(xforfit),y2,'-',color='mediumorchid')
+
+y3 = BinomialProbability2(xforfit,3,Ro,k)
+plt.plot(np.log10(xforfit),y3,'-',color='brown')
+
+plotGFP()
+
+
+
+
+
+#%%
+
+Ro_values = np.linspace(0.1,1.5,20)
+k = 0.5
+MeanRs = np.empty((len(Ro_values),len(ODtotVals)))
+MeanRs[:] = np.nan
+
+for i, Ro in enumerate(Ro_values):
+    AllyData = []
+    AllFittedData = []
+    for j, odt in enumerate(ODtotVals):
+        xdata = TitrationODvals[j,:]
+        ydata = dataGFP[j,:]
+        fittedY = BinomialProbability2(xdata,odt,Ro,k)
+        NotnanIdx = np.argwhere(~np.isnan(ydata))
+        ydata = ydata[NotnanIdx]
+        fittedY = fittedY[NotnanIdx]
+        AllyData.append(ydata)
+        AllFittedData.append(fittedY)
+        MeanRs[i,j] = getRsquared(ydata, fittedY)
+        
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)         
+plt.plot(Ro_values,np.mean(MeanRs,1),'o')
+plt.xlabel('Ro value')
+plt.ylabel('mean R squared across total ODs')
+
+posMaxRsqrd = np.where(np.mean(MeanRs,1) == np.mean(MeanRs,1).max())
+bestRo = Ro_values[posMaxRsqrd]
+print(bestRo)
+
+ 
+AllyData = []
+AllFittedData = []
+for j, odt in enumerate(ODtotVals):
+    xdata = TitrationODvals[j,:]
+    ydata = dataGFP[j,:]
+    fittedY = BinomialProbability2(xdata,odt,bestRo,k)
+    NotnanIdx = np.argwhere(~np.isnan(ydata))
+    ydata = ydata[NotnanIdx]
+    fittedY = fittedY[NotnanIdx]
+    AllyData.append(ydata)
+    AllFittedData.append(fittedY)
+    MeanRs[i,j] = getRsquared(ydata, fittedY)   
+    
+AllyData = np.vstack(AllyData)
+AllFittedData = np.vstack(AllFittedData)
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2) 
+plt.plot(AllyData,AllFittedData,'o')
+plt.xlabel('data')
+plt.ylabel('fit')
+
+
+#%%
+k =0.5
+def ObjFunc(ODx,Ro):
+    ODtot = 0.5
+    print(ODtot)
+    # k =  rate of consumption
+    # Ro = concentration of the limiting resource
+    # ODinf = the infiltration OD
+    # ODtot = the total OD
+    # returns the effective OD according to the kinetic competition model
+    timeboxes = np.arange(1,3000)
+    ODeff = np.empty(len(ODx))
+    ODeff[:] = np.nan
+    for j, Xo in enumerate(ODx):
+        Yo = ODtot-Xo
+        # now run the simulation
+        # create vectors to store values over time
+        R = np.zeros(len(timeboxes))
+        X = np.zeros(len(timeboxes))
+        Y = np.zeros(len(timeboxes))
+        Xb = np.zeros(len(timeboxes))
+        Yb = np.zeros(len(timeboxes))
+        # initialize the arrays with the initial values
+        R[0] = Ro
+        X[0] = Xo
+        Y[0] = Yo   
+        # run the actual simulation
+        # the result we want is the number (OD) of Xb at the end
+        for idx, t in enumerate(timeboxes[0:-1]):
+            idx = idx+1
+            dR = -R[idx-1]*k1*X[idx-1] - R[idx-1]*k1*Y[idx-1] + k2*Xb[idx-1] + k2*Yb[idx-1]
+            R[idx] = R[idx-1] + dR
+            #print(dR)
+            
+            dX = -R[idx-1]*k1*X[idx-1] + k2*Xb[idx-1]
+            X[idx] = X[idx-1] + dX
+            
+            dY = -R[idx-1]*k1*Y[idx-1]+ k2*Yb[idx-1]
+            Y[idx] = Y[idx-1] + dY
+            
+            dXb = R[idx-1]*X[idx-1]*k1 - k2*Xb[idx-1]
+            Xb[idx] = Xb[idx-1] + dXb
+            
+            dYb = R[idx-1]*Y[idx-1]*k1 - k2*Yb[idx-1]    
+            Yb[idx] = Yb[idx-1] + dYb
+            
+        ODeff[j] = Xb[-1]
+    FractionTransformed = Transformed(ODeff,  alpha)    
+    return FractionTransformed
+
+
+xdata = TitrationODvals[2,:]
+ydata = dataGFP[2,:]
+NotnanIdx = np.argwhere(~np.isnan(ydata))
+ydata = ydata[NotnanIdx]
+ydata = ydata.flatten()
+xdata = xdata[NotnanIdx]
+xdata = xdata.flatten()
+FitBounds = (0.2,1)
+poptRo, pcov = scipy.optimize.curve_fit(ObjFunc, xdata, ydata, bounds = FitBounds)
+fit_Ro = poptRo[0]
+Ro_error = np.round(np.sqrt(np.diag(pcov))[0],2)
+print(fit_Ro)
+print(Ro_error)
+
+
+fittedY = BinomialProbability2(xdata,odt,Ro,0.5)
+NotnanIdx = np.argwhere(~np.isnan(ydata))
+ydata = ydata[NotnanIdx]
+fittedY = fittedY[NotnanIdx]
+AllyData.append(ydata)
+AllFittedData.append(fittedY)
+MeanRs[i,j] = getRsquared(ydata, fittedY)
+
+
+# first, fit GFP
+poptG, pcov = scipy.optimize.curve_fit(fractionTransformed, FitX, FitYG, bounds = FitBounds)
+fit_alphaG = poptG[0]
+alphaG_error = np.round(np.sqrt(np.diag(pcov))[0],1)
+fitYG = fractionTransformed(FitX, fit_alphaG)
+fitY_contG = fractionTransformed(xForFit_cont, fit_alphaG)    
+# now, fit  RFP
+FitBounds = (-100,100) # lower and upper bounds for alpha
+poptR, pcov = scipy.optimize.curve_fit(fractionTransformed, FitX, FitYR, bounds = FitBounds)
+fit_alphaR = poptR[0]
+alphaR_error = np.round(np.sqrt(np.diag(pcov))[0],1)
+fitYR = fractionTransformed(FitX, fit_alphaR)
+fitY_contR = fractionTransformed(xForFit_cont, fit_alphaR)
+GFPRsqrd = getRsquared(fitYG, FitYG)
+RFPRsqrd = getRsquared(fitYR, FitYR)
+
+
+
+
+
+
+
+
+
+
+
+
+

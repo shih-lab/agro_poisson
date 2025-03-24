@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jan  2 08:05:37 2024
+
+@author: simon_alamos
+"""
+
+#%% import packages 
+import os
+filesep = os.sep # this is the folder separator, it can change depending on the operating system
+import glob # to list all the files of some kind within a folder 
+
+#%%
+#os.rename('a.txt', 'b.kml')
+
+filesParentFolder = '/Volumes/JSALAMOS/LeicaDM6B/1012024/'
+extension = '.lif'
+fileList = glob.glob(filesParentFolder + filesep + '*' + extension) # the asterisk * is a wild card
+
+for filePath in fileList:
+    originalName = filePath[filePath.rfind(filesep)+1 : filePath.find('.')]
+    print('original name: ' + originalName)
+    blocks = originalName.split('_')
+    newName = '_'.join(blocks[0:-2]) + '_' + blocks[-1] + '_' + blocks[-2]
+    print('new name: ' + newName)
+    fileFullFilePath = filePath[0: filePath.rfind(filesep)+1] + newName + extension
+    os.rename(filePath, fileFullFilePath)
+
+#%%
+
+filesParentFolder = '/Volumes/JSALAMOS/LeicaDM6B/1012024/'
+#extension = '.lif'
+fileList = glob.glob(filesParentFolder + filesep + '*inf*') # the asterisk * is a wild card
+
+for filePath in fileList:
+    originalName = filePath[filePath.rfind(filesep)+1 : filePath.find('.')]
+    # print('original name: ' + originalName)
+    # blocks = originalName.split('_')
+    # newName = '_'.join(blocks[0:-2]) + '_' + blocks[-1] + '_' + blocks[-2]
+    #print('new name: ' + newName)
+    fileFullFilePath = filePath + extension
+    os.rename(filePath, fileFullFilePath)
+
+
+

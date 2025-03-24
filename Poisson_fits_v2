@@ -1,0 +1,76 @@
+
+
+#%%
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+import scipy as scipy
+from scipy import optimize
+from scipy.stats import iqr
+
+# this is to set up the figure style
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+
+#%% grab all the data
+# load the experiment_database spreadsheet
+print('navigate to the folder where the experiment database file is stored - then select any file')
+file_path = filedialog.askopenfilename() # store the file path as a string
+lastFileSep = file_path.rfind(filesep) # find the position of the last path separator
+folderpath = file_path[0:lastFileSep] # get the part of the path corresponding to the folder where the chosen file was located
+experiment_database_filePath = folderpath + filesep + 'experiment_database.csv'
+experiment_database = pd.read_csv(experiment_database_filePath)
+
+# select which experiments to aggregate. Refer to 'experiment_database' spreadsheet for more info
+experimentIDs = ['1','2','3','4','5','6','9','12','14','17']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+
+ODdilution_exp_database = experiment_database[condition]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

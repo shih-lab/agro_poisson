@@ -1,0 +1,921 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Nov 16 16:37:45 2023
+
+@author: simon_alamos
+"""
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Nov 16 16:08:53 2023
+
+@author: simon_alamos
+"""
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+# to enable LaTeX in labels
+mpl.rcParams['text.usetex'] = True
+mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
+
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+import scipy as scipy
+from scipy import stats
+from scipy import optimize
+from scipy.stats import iqr
+from scipy.stats import f_oneway
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
+
+
+# this is to set up the figure style
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+#%% load the data
+
+EHAdataPath = '/Users/simon_alamos/Documents/Shih_lab/Data/Mitch_data/6-5-23/2023-6-5_EHA-OD.csv'
+EHAODdata = pd.read_csv(EHAdataPath)
+
+GVdataPath = '/Users/simon_alamos/Documents/Shih_lab/Data/Mitch_data/6-12-23/2023-6-12_gv_od.csv'
+GVODdata = pd.read_csv(GVdataPath)
+
+BiBi_co_dataPath = '/Users/simon_alamos/Documents/Shih_lab/Data/Mitch_data/3-13-23/BiBi_and_co.csv'
+BiBi_co_data = pd.read_csv(BiBi_co_dataPath)
+
+coopComp_dataPath = '/Users/simon_alamos/Documents/Shih_lab/Data/Mitch_data/1-1-24/coop_v_comp_allData2.csv'
+coopComp_data = pd.read_csv(coopComp_dataPath)
+
+MSODs_path = '/Users/simon_alamos/Documents/Shih_lab/Data/Mitch_data/Matthew_OD_titration/PC4_GFP_OD_Experiment_Data.csv'
+MSODs_data = pd.read_csv(MSODs_path)
+
+compDataPath = '/Users/simon_alamos/Documents/Shih_lab/Data/Mitch_data/12-25-23/12-25-23_data.csv'
+compData  = pd.read_csv(compDataPath)
+
+VirE12DataPath = '/Users/simon_alamos/Documents/Shih_lab/Data/Mitch_data/1-29-24/VirE12_results_1-29-24.csv'
+VirE12data = pd.read_csv(VirE12DataPath)
+
+AttachmentDataPath = '/Users/simon_alamos/Documents/Shih_lab/Data/plate_reader/3-18-24/experiment_dataframe.csv'
+AttachmentData = pd.read_csv(AttachmentDataPath)
+#%% GV3101 driving three different promoters
+
+PC4data = GVODdata[GVODdata['Strain']=='PC4']
+PC5data = GVODdata[GVODdata['Strain']=='PC5']
+PC6data = GVODdata[GVODdata['Strain']=='PC6']
+
+MeanPerODPC4 = PC4data.groupby(by=["OD"]).mean()
+ErrorPerODPC4 = PC4data.groupby(by=["OD"]).std()
+
+MeanPerODPC5 = PC5data.groupby(by=["OD"]).mean()
+ErrorPerODPC5 = PC5data.groupby(by=["OD"]).std()
+
+MeanPerODPC6 = PC6data.groupby(by=["OD"]).mean()
+ErrorPerODPC6 = PC6data.groupby(by=["OD"]).std()
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#sns.scatterplot(data=PC5data, x="OD", y="GFP",color='orange',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC5.index, MeanPerODPC5['GFP'],ErrorPerODPC5['GFP'], fmt="v", color="black",mfc='lightsalmon',mec='black', ms=6)
+#sns.scatterplot(data=PC4data, x="OD", y="GFP",color='b',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC4.index, MeanPerODPC4['GFP'],ErrorPerODPC4['GFP'], fmt="o", color="black",mfc='cornflowerblue',mec='black', ms=6)
+#sns.scatterplot(data=PC6data, x="OD", y="GFP",color='green',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC6.index, MeanPerODPC6['GFP'],ErrorPerODPC6['GFP'], fmt="d", color="black",mfc='limegreen',mec='black', ms=6)
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+#ax.yaxis.set_major_locator(MultipleLocator(2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+
+
+plt.xscale('log')
+plt.yscale('log')
+plt.xlabel('OD')
+plt.ylabel('GFP fluorescence intensity (a.u.)')
+plt.legend(['pCH1','pCM2','pCL1'],loc='upper right',bbox_to_anchor =(1.6, 1.04))
+plt.title('GV3101')
+plt.plot([0.472-0.14,0.472,0.472+0.14],[100000,100000,100000],'-k|')
+#plt.plot([0.2-0.14,0.2,0.2+0.14],[50000,50000,50000],'-k|')
+
+
+
+
+#%% BiBi
+
+# first, remove the data we won't use, keep only BBR1 and pVS1, as co-infiltrations or BiBis
+BiBi_co_data = BiBi_co_data[(~BiBi_co_data['Green_Plasmid'].str.contains('pSa')) & (~BiBi_co_data['Green_Plasmid'].str.contains('RK2')) & 
+                    (~BiBi_co_data['Red_Plasmid'].str.contains('pSa')) & (~BiBi_co_data['Red_Plasmid'].str.contains('RK2'))]
+
+BiBi_data = BiBi_co_data[BiBi_co_data['Type'].str.fullmatch('BiBi')]
+co_data = BiBi_co_data[BiBi_co_data['Type'].str.fullmatch('Co')]
+
+# let's plot the GFP fluo driven by the pVS1 ori when is launched as co vs BiBi
+Green_pVS1_BiBi_data = BiBi_data[BiBi_data['Green_Plasmid'].str.fullmatch('pVS1')]
+Green_pVS1_Co_data = co_data[co_data['Green_Plasmid'].str.fullmatch('pVS1')]
+Green_pVS1_data = pd.concat([Green_pVS1_BiBi_data, Green_pVS1_Co_data]) # merge widefield (x) and confocal (y)
+
+sns.boxplot(data=Green_pVS1_data,x='Type',y='mScarlet')
+
+
+
+#%% errors and means across plants
+
+MeanPerODPC4_2 = PC4data.groupby(by=["OD",'Plant']).mean()
+MeanPerODPC4_2 = MeanPerODPC4_2.reset_index()
+MeanPerODPC4_3 = MeanPerODPC4_2.groupby(by=["OD"]).mean()
+ErrorPerODPC4_2 = PC4data.groupby(by=["OD",'Plant']).sem()
+ErrorPerODPC4_2 = MeanPerODPC4_2.reset_index()
+ErrorPerODPC4_3 = MeanPerODPC4_2.groupby(by=["OD"]).sem()
+
+MeanPerODPC5_2 = PC5data.groupby(by=["OD",'Plant']).mean()
+MeanPerODPC5_2 = MeanPerODPC5_2.reset_index()
+MeanPerODPC5_3 = MeanPerODPC5_2.groupby(by=["OD"]).mean()
+ErrorPerODPC5_2 = PC5data.groupby(by=["OD",'Plant']).sem()
+ErrorPerODPC5_2 = MeanPerODPC5_2.reset_index()
+ErrorPerODPC5_3 = MeanPerODPC5_2.groupby(by=["OD"]).sem()
+
+MeanPerODPC6_2 = PC6data.groupby(by=["OD",'Plant']).mean()
+MeanPerODPC6_2 = MeanPerODPC6_2.reset_index()
+MeanPerODPC6_3 = MeanPerODPC6_2.groupby(by=["OD"]).mean()
+ErrorPerODPC6_2 = PC6data.groupby(by=["OD",'Plant']).sem()
+ErrorPerODPC6_2 = MeanPerODPC6_2.reset_index()
+ErrorPerODPC6_3 = MeanPerODPC6_2.groupby(by=["OD"]).sem()
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#sns.scatterplot(data=PC5data, x="OD", y="GFP",color='orange',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC5_3.index, MeanPerODPC5_3['GFP'],ErrorPerODPC5_3['GFP'], fmt="v", color="black",mfc='lightsalmon',mec='black', ms=6)
+#sns.scatterplot(data=PC4data, x="OD", y="GFP",color='b',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC4_3.index, MeanPerODPC4_3['GFP'],ErrorPerODPC4_3['GFP'], fmt="o", color="black",mfc='cornflowerblue',mec='black', ms=6)
+#sns.scatterplot(data=PC6data, x="OD", y="GFP",color='green',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC6_3.index, MeanPerODPC6_3['GFP'],ErrorPerODPC6_3['GFP'], fmt="d", color="black",mfc='limegreen',mec='black', ms=6)
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+#ax.yaxis.set_major_locator(MultipleLocator(2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+
+
+plt.xscale('log')
+plt.yscale('log')
+plt.xlabel('OD')
+plt.ylabel('GFP fluorescence intensity (a.u.)')
+plt.legend(['pCH1','pCM2','pCL1'],loc='upper right',bbox_to_anchor =(1.6, 1.04))
+plt.title('GV3101')
+
+
+
+
+
+#%% calculate the means and errors of each promoter
+PC4data = EHAODdata[EHAODdata['Strain']=='PC4']
+PC5data = EHAODdata[EHAODdata['Strain']=='PC5']
+PC6data = EHAODdata[EHAODdata['Strain']=='PC6']
+
+MeanPerODPC4 = PC4data.groupby(by=["OD"]).mean()
+ErrorPerODPC4 = PC4data.groupby(by=["OD"]).std()
+
+MeanPerODPC5 = PC5data.groupby(by=["OD"]).mean()
+ErrorPerODPC5 = PC5data.groupby(by=["OD"]).std()
+
+MeanPerODPC6 = PC6data.groupby(by=["OD"]).mean()
+ErrorPerODPC6 = PC6data.groupby(by=["OD"]).std()
+
+fig = plt.figure()
+fig.set_size_inches(2, 2)
+sns.scatterplot(data=PC4data, x="OD", y="GFP",color='b',alpha = 0.1,s=55)
+#plt.errorbar(MeanPerOD4.index, MeanPerOD4['GFP'], SDPerOD4['GFP'], fmt="o", color="k",mfc='white',mec='black', ms=6)
+plt.errorbar(MeanPerODPC4.index, MeanPerODPC4['GFP'],ErrorPerODPC4['GFP'], fmt="o", color="black",mfc='white',mec='black', ms=7,lw=2)
+
+sns.scatterplot(data=PC5data, x="OD", y="GFP",color='orange',alpha = 0.1,s=55)
+#plt.errorbar(MeanPerOD5.index, MeanPerOD5['GFP'], SDPerOD5['GFP'], fmt="o", color="k",mfc='white',mec='black', ms=6)
+plt.errorbar(MeanPerODPC5.index, MeanPerODPC5['GFP'],ErrorPerODPC5['GFP'], fmt="v", color="black",mfc='white',mec='black', ms=7,lw=2)
+
+sns.scatterplot(data=PC6data, x="OD", y="GFP",color='green',alpha = 0.1,s=55)
+#plt.errorbar(MeanPerOD6.index, MeanPerOD6['GFP'], SDPerOD6['GFP'], fmt="o", color="k",mfc='white',mec='black', ms=6)
+plt.errorbar(MeanPerODPC6.index, MeanPerODPC6['GFP'],ErrorPerODPC6['GFP'], fmt="d", color="black",mfc='white',mec='black', ms=7,lw=2)
+
+plt.xscale('log')
+plt.yscale('log')
+plt.xlabel('OD')
+plt.ylabel('GFP fluorescence intensity (a.u.)')
+plt.title('EHA105')
+
+
+#%%
+
+fig = plt.figure()
+fig.set_size_inches(2, 2)
+#sns.scatterplot(data=PC4data, x="OD", y="GFP",color='b',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC4.index, MeanPerODPC4['GFP'],ErrorPerODPC4['GFP'], fmt="o", color="black",mfc='royalblue',mec='black', ms=8)
+#sns.scatterplot(data=PC5data, x="OD", y="GFP",color='orange',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC5.index, MeanPerODPC5['GFP'],ErrorPerODPC5['GFP'], fmt="v", color="black",mfc='orange',mec='black', ms=8)
+#sns.scatterplot(data=PC6data, x="OD", y="GFP",color='green',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC6.index, MeanPerODPC6['GFP'],ErrorPerODPC6['GFP'], fmt="d", color="black",mfc='limegreen',mec='black', ms=8)
+plt.xscale('log')
+plt.yscale('log')
+plt.xlabel('OD')
+plt.ylabel('GFP fluorescence intensity (a.u.)')
+plt.title('EHA105')
+
+fig = plt.figure()
+fig.set_size_inches(2, 2)
+sns.scatterplot(data=PC4data, x="OD", y="GFP",color='b',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC4.index, MeanPerODPC4['GFP'],ErrorPerODPC4['GFP'], fmt="o", color="black",mfc='b',mec='black', ms=8)
+sns.scatterplot(data=PC5data, x="OD", y="GFP",color='orange',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC5.index, MeanPerODPC5['GFP'],ErrorPerODPC5['GFP'], fmt="v", color="black",mfc='orange',mec='black', ms=8)
+sns.scatterplot(data=PC6data, x="OD", y="GFP",color='green',alpha = 0.1,s=55)
+plt.errorbar(MeanPerODPC6.index, MeanPerODPC6['GFP'],ErrorPerODPC6['GFP'], fmt="d", color="black",mfc='g',mec='black', ms=8)
+plt.xscale('log')
+plt.yscale('log')
+plt.xlabel('OD')
+plt.ylabel('GFP fluorescence intensity (a.u.)')
+plt.title('EHA105')
+
+#%% competition and cooperation
+
+# calculate means and errors
+
+bufferdata = coopComp_data[coopComp_data['Strain2']=='buffer']
+bufferdata['log2GFP'] = np.log2(bufferdata['GFP'])
+meanGFPBuffer = np.mean(bufferdata['GFP'])
+sdGFPBuffer = np.std(bufferdata['GFP'])
+meanGFPBuffer_l2 = np.mean(bufferdata['log2GFP'])
+sdGFPBuffer_l2 = np.std(bufferdata['log2GFP'])
+
+EVdata = coopComp_data[coopComp_data['Strain2']=='EV']
+EVdata['GFPnorm'] = EVdata['GFP']/meanGFPBuffer
+EVdata['log2GFP'] = np.log2(EVdata['GFP'])
+
+C58C1data = coopComp_data[coopComp_data['Strain2']=='C58C1']
+C58C1data['GFPnorm'] = C58C1data['GFP']/meanGFPBuffer
+C58C1data['log2GFP'] = np.log2(C58C1data['GFP'])
+
+MeanPerOD_EV = EVdata.groupby(by=["Total_OD"]).mean()
+ErrorPerOD_EV = EVdata.groupby(by=["Total_OD"]).std()
+
+MeanPerOD_C58C1 = C58C1data.groupby(by=["Total_OD"]).mean()
+ErrorPerOD_C58C1 = C58C1data.groupby(by=["Total_OD"]).std()
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2.75, 2.25)
+#sns.scatterplot(data=PC5data, x="OD", y="GFP",color='orange',alpha = 0.1,s=55)
+plt.errorbar(MeanPerOD_EV.index, MeanPerOD_EV['GFP'],ErrorPerOD_EV['GFP'], fmt="v", color="black",mfc='lightsalmon',mec='black', ms=6)
+#sns.scatterplot(data=PC4data, x="OD", y="GFP",color='b',alpha = 0.1,s=55)
+plt.errorbar(MeanPerOD_C58C1.index, MeanPerOD_C58C1['GFP'],ErrorPerOD_C58C1['GFP'], fmt="o", color="black",mfc='cornflowerblue',mec='black', ms=6)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+#ax.yaxis.set_major_locator(MultipleLocator(2))
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel('total OD')
+plt.ylabel('GFP fluorescence intensity (a.u.)')
+plt.legend(['EV','C58'],loc='upper right',bbox_to_anchor =(1.6, 1.04))
+plt.title('pCM2-GFP constant at OD 0.025')
+#plt.ylim(-24893.75, 532690.75)
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#plt.errorbar(MeanPerOD_EV.index, MeanPerOD_EV['GFP'],ErrorPerOD_EV['GFP'], fmt="v", color="black",mfc='lightsalmon',mec='black', ms=6)
+#plt.errorbar(MeanPerOD_C58C1.index, MeanPerOD_C58C1['GFP'],ErrorPerOD_C58C1['GFP'], fmt="o", color="black",mfc='cornflowerblue',mec='black', ms=6)
+xTickPos = np.arange(0.025,2,0.025)#np.array([0.025,0.035,0.05,0.1,0.5,1,2])
+sns.boxplot(data = C58C1data, x = "Total_OD", y = 'GFP',color='cornflowerblue',linewidth=0.75)
+sns.boxplot(data = EVdata, x = "Total_OD", y = 'GFP',color='lightsalmon',linewidth=0.75)
+# Change major ticks to show every 20.
+#ax.xaxis.set_major_locator(MultipleLocator(0.5))
+#ax.yaxis.set_major_locator(MultipleLocator(2))
+# Change minor ticks to show every 5. (20/4 = 5)
+#ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+#plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel('total OD')
+plt.ylabel('GFP fluorescence intensity (a.u.)')
+plt.legend(['EV','C58'],loc='upper right',bbox_to_anchor =(1.6, 1.04))
+plt.title('pCM2-GFP constant at OD 0.025')
+
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#sns.scatterplot(data=PC5data, x="OD", y="GFP",color='orange',alpha = 0.1,s=55)
+plt.errorbar(MeanPerOD_EV.index, MeanPerOD_EV['log2GFP'],ErrorPerOD_EV['log2GFP'], fmt="v", color="black",mfc='lightsalmon',mec='black', ms=6)
+#sns.scatterplot(data=PC4data, x="OD", y="GFP",color='b',alpha = 0.1,s=55)
+plt.errorbar(MeanPerOD_C58C1.index, MeanPerOD_C58C1['log2GFP'],ErrorPerOD_C58C1['log2GFP'], fmt="o", color="black",mfc='cornflowerblue',mec='black', ms=6)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+#ax.yaxis.set_major_locator(MultipleLocator(2))
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel('total OD')
+plt.ylabel('GFP fluorescence intensity (a.u.)')
+plt.legend(['EV','C58'],loc='upper right',bbox_to_anchor =(1.6, 1.04))
+plt.title('pCM2-GFP constant at OD 0.025')
+
+
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#sns.scatterplot(data=PC5data, x="OD", y="GFP",color='orange',alpha = 0.1,s=55)
+plt.errorbar(MeanPerOD_EV.index, MeanPerOD_EV['GFPnorm'],ErrorPerOD_EV['GFPnorm'], fmt="v", color="black",mfc='lightsalmon',mec='black', ms=6)
+#sns.scatterplot(data=PC4data, x="OD", y="GFP",color='b',alpha = 0.1,s=55)
+plt.errorbar(MeanPerOD_C58C1.index, MeanPerOD_C58C1['GFPnorm'],ErrorPerOD_C58C1['GFPnorm'], fmt="o", color="black",mfc='cornflowerblue',mec='black', ms=6)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+#ax.yaxis.set_major_locator(MultipleLocator(2))
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel('total OD')
+plt.ylabel('GFP fluorescence intensity (normalized)')
+plt.legend(['EV','C58'],loc='upper right',bbox_to_anchor =(1.6, 1.04))
+plt.title('pCM2-GFP constant at OD 0.025')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+ODs = np.array(MeanPerOD_EV.index)
+ODs = np.append([0.025],ODs)
+plt.errorbar(ODs, np.append([meanGFPBuffer],MeanPerOD_EV['GFP']),np.append([sdGFPBuffer],ErrorPerOD_EV['GFP']), 
+             fmt="v", color="black",mfc='lightsalmon',mec='black', ms=6)
+plt.errorbar(ODs, np.append([meanGFPBuffer],MeanPerOD_C58C1['GFP']),np.append([sdGFPBuffer],ErrorPerOD_C58C1['GFP']),
+             fmt="o", color="black",mfc='cornflowerblue',mec='black', ms=6)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+#ax.yaxis.set_major_locator(MultipleLocator(2))
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel('total OD')
+plt.ylabel('GFP fluorescence intensity (a.u.)')
+plt.legend(['EV','C58'],loc='upper right',bbox_to_anchor =(1.6, 1.04))
+plt.title('pCM2-GFP constant at OD 0.025')
+
+
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+ODs = np.array(MeanPerOD_EV.index)
+ODs = np.append([0.025],ODs)
+plt.errorbar(ODs, np.append([meanGFPBuffer_l2],MeanPerOD_EV['log2GFP']),np.append([sdGFPBuffer_l2],ErrorPerOD_EV['log2GFP']), 
+             fmt="v", color="black",mfc='lightsalmon',mec='black', ms=6)
+plt.errorbar(ODs, np.append([meanGFPBuffer_l2],MeanPerOD_C58C1['log2GFP']),np.append([sdGFPBuffer_l2],ErrorPerOD_C58C1['log2GFP']),
+             fmt="o", color="black",mfc='cornflowerblue',mec='black', ms=6)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+#ax.yaxis.set_major_locator(MultipleLocator(2))
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xscale('log')
+#plt.yscale('log')
+plt.xlabel('total OD')
+plt.ylabel('log2 GFP fluorescence intensity (a.u.)')
+plt.legend(['EV','C58'],loc='upper right',bbox_to_anchor =(1.6, 1.04))
+plt.title('pCM2-GFP constant at OD 0.025')
+
+
+#%%
+condition1 = C58C1data['Strain2_OD']==0.01
+condition2 = C58C1data['Strain2_OD']==0.025
+C58C1data_sub = C58C1data[condition1|condition2]
+
+a = C58C1data_sub[condition1]['log2GFP']
+b = C58C1data_sub[condition2]['log2GFP']
+result = scipy.stats.ttest_ind(a, b, alternative = 'two-sided')
+print(result)
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+sns.boxplot(data=C58C1data_sub,x='Strain2_OD',y='log2GFP')
+sns.stripplot(data=C58C1data_sub,x='Strain2_OD',y='log2GFP')
+plt.xlabel('C58C1 OD')
+plt.ylabel('log2 GFP fluorescence (a.u.)')
+plt.title('GFP reporter strain at OD 0.025 \n p-val = '+ str(result[1]))
+
+
+
+#%% Matthew's super OD titration
+
+MeanPerOD_MS = MSODs_data.groupby(by=["OD"]).mean()
+ErrorPerOD_MS = MSODs_data.groupby(by=["OD"]).std()
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#sns.scatterplot(data=PC5data, x="OD", y="GFP",color='orange',alpha = 0.1,s=55)
+plt.errorbar(MeanPerOD_MS.index, MeanPerOD_MS['GFP'],ErrorPerOD_MS['GFP'], fmt="o", color="black",mfc='cornflowerblue',mec='black', ms=6)
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(1))
+#ax.yaxis.set_major_locator(MultipleLocator(2))
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+#plt.xscale('log')
+plt.yscale('log')
+plt.xlabel('OD')
+plt.ylabel('GFP fluorescence intensity (a.u.)')
+#plt.legend(['EV','C58'],loc='upper right',bbox_to_anchor =(1.6, 1.04))
+plt.title('pCM2-GFP titration without competition')
+
+#%% 
+colors = ['lightsalmon','tomato','palegreen','limegreen','lightskyblue','cornflowerblue','lightgray']
+#forlabels = ['+ EV 0.075','+ EV 1.975','+ C58C1 0.075','+ C58C1 1.975','+ $\Delta$VirD1,2 0.075','+ $\Delta$VirD1,2 1.975','+ buffer']
+forlabels = ['+ EV 0.075','+ EV 1.975','+ C58C1 0.075','+ C58C1 1.975','+ buffer']
+compData['log2GFP'] = np.log2(compData['GFP'])
+#remove VirD 
+compDataNoVir = compData[compData['Treatment']!= 6]
+compDataNoVir = compDataNoVir[compDataNoVir['Treatment']!= 5]
+
+fig, ax = plt.subplots()
+fig.set_size_inches(1.5, 2)
+sns.swarmplot(data = compDataNoVir, x = 'Treatment', y ='log2GFP',palette=colors,hue='Treatment',alpha=0.99,edgecolor='none',linewidth=0.5,size=3)
+#sns.barplot(data = compDataNoVir, x = 'Treatment', y ='log2GFP',ci='sd',palette=colors,linewidth=0.75)
+sns.boxplot(data = compDataNoVir, x = 'Treatment', y ='log2GFP',palette=colors,linewidth=0.75)
+locs, labels = plt.xticks()
+plt.xticks(locs,forlabels,rotation = 90)
+ax.xaxis.set_major_locator(MultipleLocator(1))
+ax.yaxis.set_major_locator(MultipleLocator(1))
+# Change minor ticks to show every 5. (20/4 = 5)
+#ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+#ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('infiltration')
+plt.ylabel('$log_{2}$ GFP \n fluorescence intensity (a.u.)')
+plt.legend([])
+plt.ylim(10.4,18.4)
+
+
+#%%
+a = compData[compData['Treatment']==1]['log2GFP']
+b = compData[compData['Treatment']==3]['log2GFP']
+result = scipy.stats.ttest_ind(a, b, alternative = 'two-sided')
+print(result)
+
+
+
+#%% VirE12 IPTG inducible experiment
+#plotOrder = 
+# plt.rc('text', usetex=True)
+# plt.rcParams.update({'text.usetex' : True})
+VirE12data['log2GFP'] = np.log2(VirE12data['GFP'])
+VirE12data['log2RFP'] = np.log2(VirE12data['RFP'])
+VirE12data['ID'] = VirE12data['ID'].astype(str)
+
+labels = ['buffer','GFP wt','GFP','GFP','GFP','GFP']
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+sns.boxplot(data=VirE12data,x='ID',y='log2RFP')
+sns.swarmplot(data=VirE12data,x='ID',y='log2RFP',s=2)
+#plt.xlabel(labels)
+plt.title(r'$\Delta$ VirE12')
+
+VirE12data2 = VirE12data[VirE12data['ID'].str.fullmatch('1|2|3|4')]
+tukey = pairwise_tukeyhsd(endog=VirE12data2['RFP'],
+                          groups=VirE12data2['ID'],
+                          alpha=0.05)
+print(tukey)
+
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2.2, 2)
+sns.scatterplot(data=VirE12data, x = 'log2GFP', y= 'log2RFP', s=4, palette = 'Set1', hue = 'ID')
+plt.xlabel('punch GFP fluo')
+plt.ylabel('punch RFP fluo')
+
+inf1 = np.mean(VirE12data.loc[VirE12data['ID']==1]['RFP'])
+inf2 = np.mean(VirE12data.loc[VirE12data['ID']==2]['RFP'])
+inf3 = np.mean(VirE12data.loc[VirE12data['ID']==3]['RFP'])
+
+f = (inf2-inf3)/(inf2-inf1)
+print(f)
+#%%
+a = VirE12data[VirE12data['ID']==1]['RFP']
+b = VirE12data[VirE12data['ID']==3]['RFP']
+result = scipy.stats.ttest_ind(a, b, alternative = 'two-sided')
+print(result)
+
+
+
+
+
+
+#%% microscopy experiment: first round in the Leica
+
+datapath = '/Users/simon_alamos/Documents/Shih_lab/Data/Microscopy/RawData/12-11-23/CompData.csv'
+microscopyData = pd.read_csv(datapath)
+fractionTransformable = 0.45
+# since the labeled GFP and RFP strains are infiltrated at the same OD, this is the OD of each labeled strain
+microscopyData['fracGFP'] = microscopyData['NGFP']/(microscopyData['NBFP']*fractionTransformable)
+microscopyData['fracGFP'].loc[microscopyData['fracGFP']>1]=1
+microscopyData['fracRFP'] = microscopyData['NRFP']/(microscopyData['NBFP']*fractionTransformable)
+microscopyData['fracRFP'].loc[microscopyData['fracRFP']>1]=1
+microscopyData['NotGFP'] = 1 - microscopyData['fracGFP']
+microscopyData['NotRFP'] = 1 - microscopyData['fracRFP']
+
+colors = ['lightsalmon','tomato','palegreen','limegreen','lightskyblue','cornflowerblue','lightgray']
+forlabels = ['+ EV 0.075','+ EV 1.975','+ C58C1 0.075','+ C58C1 1.975','+ $\Delta$Vir1,2 0.075','+ $\Delta$Vir1,2 1.975','+ buffer']
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#sns.swarmplot(data = compData, x = 'Treatment', y ='log2GFP',palette=colors,hue='Treatment',alpha=0.99,edgecolor='none',linewidth=0.5,size=2)
+sns.boxplot(data = microscopyData, x = 'infName', y ='fracGFP',palette=colors,linewidth=0.75)
+locs, labels = plt.xticks()
+plt.xticks(locs,forlabels,rotation = 90)
+ax.xaxis.set_major_locator(MultipleLocator(1))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+# Change minor ticks to show every 5. (20/4 = 5)
+#ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+#ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('infiltration')
+plt.ylabel('fraction of GFP cells')
+plt.legend([])
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#sns.swarmplot(data = compData, x = 'Treatment', y ='log2GFP',palette=colors,hue='Treatment',alpha=0.99,edgecolor='none',linewidth=0.5,size=2)
+sns.boxplot(data = microscopyData, x = 'infName', y ='meanAvgFluoRFP',palette=colors,linewidth=0.75)
+locs, labels = plt.xticks()
+plt.xticks(locs,forlabels,rotation = 90)
+ax.xaxis.set_major_locator(MultipleLocator(1))
+ax.yaxis.set_major_locator(MultipleLocator(10000))
+# Change minor ticks to show every 5. (20/4 = 5)
+#ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+#ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('infiltration')
+plt.ylabel('fluorescence of RFP cells')
+plt.legend([])
+
+
+#%%
+a = microscopyData[microscopyData['infName']=='C58C1_OD01']['fracGFP']
+b = microscopyData[microscopyData['infName']=='buffer_OD01']['fracGFP']
+result = scipy.stats.ttest_ind(a, b, alternative = 'less')
+print(result)
+
+
+#%% microscopy experiment: first round in the Zeiss 710
+
+datapath = '/Volumes/JSALAMOS/lsm710/2024/1-15-24/experiment_30_nuclei_counts.csv'
+microscopyData = pd.read_csv(datapath)
+fractionTransformable = 0.45
+# since the labeled GFP and RFP strains are infiltrated at the same OD, this is the OD of each labeled strain
+microscopyData['fracGFP'] = microscopyData['NGFP']/(microscopyData['NBFP']*fractionTransformable)
+microscopyData['fracGFP'].loc[microscopyData['fracGFP']>1]=1
+microscopyData['fracRFP'] = microscopyData['NRFP']/(microscopyData['NBFP']*fractionTransformable)
+microscopyData['fracRFP'].loc[microscopyData['fracRFP']>1]=1
+microscopyData['NotGFP'] = 1 - microscopyData['fracGFP']
+microscopyData['NotRFP'] = 1 - microscopyData['fracRFP']
+
+# remove infiltration 6 for this figure
+microscopyData = microscopyData[~microscopyData['filename'].str.contains('inf6')]
+fileNames = list(microscopyData['filename'])
+microscopyData['infID'] = [x[-1] for x in fileNames]
+
+colors = ['lightsalmon','tomato','palegreen','limegreen','lightskyblue','cornflowerblue','lightgray']
+forlabels = ['+ EV 0.075','+ EV 1.975','+ C58C1 0.075','+ C58C1 1.975','+ buffer']
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#sns.swarmplot(data = compData, x = 'Treatment', y ='log2GFP',palette=colors,hue='Treatment',alpha=0.99,edgecolor='none',linewidth=0.5,size=2)
+sns.swarmplot(data = microscopyData, x = 'infID', y ='fracGFP',linewidth=0.75,palette=colors)
+sns.boxplot(data = microscopyData, x = 'infID', y ='fracGFP',palette=colors,linewidth=0.75)
+locs, labels = plt.xticks()
+plt.xticks(locs,forlabels,rotation = 90)
+ax.xaxis.set_major_locator(MultipleLocator(1))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+# Change minor ticks to show every 5. (20/4 = 5)
+#ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+#ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('infiltration')
+plt.ylabel('fraction of GFP cells')
+plt.legend([])
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#sns.swarmplot(data = compData, x = 'Treatment', y ='log2GFP',palette=colors,hue='Treatment',alpha=0.99,edgecolor='none',linewidth=0.5,size=2)
+sns.swarmplot(data = microscopyData, x = 'infID', y ='meanIntFluoGFP',palette=colors,linewidth=0.75)
+sns.boxplot(data = microscopyData, x = 'infID', y ='meanIntFluoGFP',palette=colors,linewidth=0.75)
+locs, labels = plt.xticks()
+plt.xticks(locs,forlabels,rotation = 90)
+ax.xaxis.set_major_locator(MultipleLocator(1))
+#ax.yaxis.set_major_locator(MultipleLocator(10000))
+# Change minor ticks to show every 5. (20/4 = 5)
+#ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+#ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('infiltration')
+plt.ylabel('fluorescence of GFP cells (integrated)')
+plt.legend([])
+
+colors = ['lightsalmon','tomato','palegreen','limegreen','lightskyblue','cornflowerblue','lightgray']
+forlabels = ['+ EV 0.075','+ EV 1.975','+ C58C1 0.075','+ C58C1 1.975','+ buffer']
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#sns.swarmplot(data = compData, x = 'Treatment', y ='log2GFP',palette=colors,hue='Treatment',alpha=0.99,edgecolor='none',linewidth=0.5,size=2)
+sns.swarmplot(data = microscopyData, x = 'infID', y ='fracRFP',linewidth=0.75,palette=colors)
+sns.boxplot(data = microscopyData, x = 'infID', y ='fracRFP',palette=colors,linewidth=0.75)
+locs, labels = plt.xticks()
+plt.xticks(locs,forlabels,rotation = 90)
+ax.xaxis.set_major_locator(MultipleLocator(1))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+# Change minor ticks to show every 5. (20/4 = 5)
+#ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+#ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('infiltration')
+plt.ylabel('fraction of RFP cells')
+plt.legend([])
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#sns.swarmplot(data = compData, x = 'Treatment', y ='log2GFP',palette=colors,hue='Treatment',alpha=0.99,edgecolor='none',linewidth=0.5,size=2)
+sns.swarmplot(data = microscopyData, x = 'infID', y ='meanAvgFluoRFP',palette=colors,linewidth=0.75)
+sns.boxplot(data = microscopyData, x = 'infID', y ='meanAvgFluoRFP',palette=colors,linewidth=0.75)
+locs, labels = plt.xticks()
+plt.xticks(locs,forlabels,rotation = 90)
+ax.xaxis.set_major_locator(MultipleLocator(1))
+#ax.yaxis.set_major_locator(MultipleLocator(10000))
+# Change minor ticks to show every 5. (20/4 = 5)
+#ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+#ax.grid(axis='x',which='major', color='#CCCCCC', linestyle='-')
+ax.grid(axis='y',which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(axis='x',which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('infiltration')
+plt.ylabel('fluorescence of RFP cells')
+plt.legend([])
+
+#%%
+a = microscopyData[microscopyData['infID']=='1']['meanIntFluoGFP']
+b = microscopyData[microscopyData['infID']=='5']['meanIntFluoGFP']
+result = scipy.stats.ttest_ind(a, b, alternative = 'greater')
+print(result)
+
+
+#%% ATTACHMENT MUTANTS PLATE READER EXPERIMENT FROM 3/18/24
+
+
+Names_dict = {'0':'buffer','1':'EV OD01','2':'EV OD2','3':'C58C1 OD01','4':'C58C1 OD2','5':'UPP OD01','6':'UPP OD2','7':'CelA OD01','8':'CelA OD2'}
+AttachmentData['infiltration'] = AttachmentData['infiltration'].astype(str)
+AttachmentData['infiltration'] = [x.replace('.0','') for x in AttachmentData['infiltration']]
+AttachmentData['infiltration_name'] = AttachmentData['infiltration']
+AttachmentData = AttachmentData.replace({"infiltration_name": Names_dict})
+AttachmentData['logGFP'] = np.log10(AttachmentData['GFP'])
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2.95, 2)
+sns.boxplot(data=AttachmentData,x='infiltration_name',y='logGFP')
+sns.swarmplot(data=AttachmentData,x='infiltration_name',y='logGFP',s=2.75)
+plt.grid('on')
+plt.xticks(rotation=90)  
+plt.ylabel('log10 GFP fluorescence (a.u.)')
+#plt.ylim(0,6)
+#plt.yscale('log')
+
+
+# background = 1000
+
+# mean1 = np.mean(AttachmentData[AttachmentData['infiltration']=='1']['GFP'])-background
+# mean2 = np.mean(AttachmentData[AttachmentData['infiltration']=='2']['GFP'])-background
+# print('norm 2 = ' + str(np.round(mean2/mean1,3)))
+
+# mean3 = np.mean(AttachmentData[AttachmentData['infiltration']=='3']['GFP'])-background
+# mean4 = np.mean(AttachmentData[AttachmentData['infiltration']=='4']['GFP'])-background
+# print('norm 4 = ' + str(np.round(mean4/mean3,3)))
+
+# mean5 = np.mean(AttachmentData[AttachmentData['infiltration']=='5']['GFP'])-background
+# mean6 = np.mean(AttachmentData[AttachmentData['infiltration']=='6']['GFP'])-background
+# print('norm 6 = ' + str(np.round(mean6/mean5,3)))
+
+# mean7 = np.mean(AttachmentData[AttachmentData['infiltration']=='7']['GFP'])-background
+# mean8 = np.mean(AttachmentData[AttachmentData['infiltration']=='8']['GFP'])-background
+# print('norm 8 = ' + str(np.round(mean8/mean7,3)))
+
+#%% GV3101 experiment from 10/6/24 
+
+datapath = '/Users/simon_alamos/Documents/Shih_lab/Data/plate_reader/10-6-24/experiment_dataframe.csv'
+GV3101data = pd.read_csv(datapath)
+Names_dict = {'A':'EV 0.075','B':'EV 1.975','C':'GV3101 0.075','D':'GV3101 1.975','E':'buffer'}
+GV3101data['infiltration_name'] = GV3101data['infiltration']
+GV3101data = GV3101data.replace({"infiltration_name": Names_dict})
+GV3101data = GV3101data[GV3101data['infiltration'].str.fullmatch('A|B|C|D|E')]
+GV3101data['logGFP'] = np.log10(GV3101data['GFP'])
+myorder = ['buffer','EV 0.075','EV 1.975','GV3101 0.075','GV3101 1.975']
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+sns.boxplot(data=GV3101data,x='infiltration_name',y='logGFP',order=myorder)
+sns.swarmplot(data=GV3101data,x='infiltration_name',y='logGFP',s=2.75,order=myorder)
+plt.grid('on')
+plt.xticks(rotation=90)  
+plt.ylabel('log10 GFP fluorescence (a.u.)')
+plt.title('data from 10/6/24')
+
+group0 = GV3101data[GV3101data['infiltration_name']=='buffer']['GFP']
+group1 = GV3101data[GV3101data['infiltration_name']=='EV 0.075']['GFP']
+group2 = GV3101data[GV3101data['infiltration_name']=='EV 1.975']['GFP']
+group3 = GV3101data[GV3101data['infiltration_name']=='GV3101 0.075']['GFP']
+group4 = GV3101data[GV3101data['infiltration_name']=='GV3101 1.975']['GFP']
+
+f_oneway(group0, group1, group2,group3,group4)
+tukey = pairwise_tukeyhsd(endog=GV3101data['GFP'],
+                          groups=GV3101data['infiltration_name'],
+                          alpha=0.05)
+print(tukey)
+
+
+#%% remove the EV data from AttachmentData to replace it by the EV experiment from 10/6/24 
+# this is NOT! a good idea because they were performed on different weeks
+
+AttachmentData_clean = AttachmentData[~AttachmentData['infiltration'].str.fullmatch('0|1|2')]
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2.95, 2)
+sns.boxplot(data=AttachmentData_clean,x='infiltration_name',y='logGFP')
+sns.swarmplot(data=AttachmentData_clean,x='infiltration_name',y='logGFP',s=2.75)
+plt.grid('on')
+plt.xticks(rotation=90)  
+plt.ylabel('log10 GFP fluorescence (a.u.)')
+plt.title('cleaned up attachment data')
+
+# merge with the 10/6/24  data
+
+merged_data = pd.concat([GV3101data,AttachmentData_clean])
+myorder = ['buffer','EV 0.075','EV 1.975','GV3101 0.075','GV3101 1.975','C58C1 OD01','C58C1 OD2','UPP OD01','UPP OD2','CelA OD01',
+       'CelA OD2']
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2.95, 2)
+sns.boxplot(data=merged_data,x='infiltration_name',y='logGFP', order = myorder)
+sns.swarmplot(data=merged_data,x='infiltration_name',y='logGFP',s=2.75, order = myorder)
+plt.grid('on')
+plt.xticks(rotation=90)  
+plt.ylabel('log10 GFP fluorescence (a.u.)')
+plt.title('cleaned up attachment data')
+
+group0 = merged_data[merged_data['infiltration_name']=='buffer']['GFP']
+group1 = merged_data[merged_data['infiltration_name']=='EV 0.075']['GFP']
+group2 = merged_data[merged_data['infiltration_name']=='EV 1.975']['GFP']
+group3 = merged_data[merged_data['infiltration_name']=='GV3101 0.075']['GFP']
+group4 = merged_data[merged_data['infiltration_name']=='GV3101 1.975']['GFP']
+group5 = merged_data[merged_data['infiltration_name']=='C58C1 OD01']['GFP']
+group6 = merged_data[merged_data['infiltration_name']=='C58C1 OD2']['GFP']
+group7 = merged_data[merged_data['infiltration_name']=='UPP OD01']['GFP']
+group8 = merged_data[merged_data['infiltration_name']=='UPP OD2']['GFP']
+group9 = merged_data[merged_data['infiltration_name']=='CelA OD01']['GFP']
+group10 = merged_data[merged_data['infiltration_name']=='CelA OD2']['GFP']
+
+f_oneway(group0, group1, group2,group3,group4,group5,group6,group7,group8,group9,group10)
+tukey = pairwise_tukeyhsd(endog=merged_data['GFP'],
+                          groups=merged_data['infiltration_name'],
+                          alpha=0.05)
+print(tukey)
+
+
+#plt.ylim(0,6)
+#plt.yscale('log')
+#%%
+
+b = microscopyData[microscopyData['infID']=='5']['meanIntFluoGFP']
+result = scipy.stats.ttest_ind(a, b, alternative = 'greater')
+print(result)
+
+
+
+
+
+
+
+
+
+
+

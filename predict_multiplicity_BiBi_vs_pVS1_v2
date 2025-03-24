@@ -1,0 +1,721 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jan  2 06:52:50 2024
+
+@author: simon_alamos
+"""
+
+
+
+#%%
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+# to enable LaTeX in labels
+mpl.rcParams['text.usetex'] = True
+mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
+
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+import scipy as scipy
+import math
+import scipy.special
+from scipy import optimize
+from scipy.stats import iqr
+
+# this is to set up the figure style
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+
+#%% PROBABILITY OF GETTING N STRAINS AT A GIVEN ODTOT
+
+fractionTransformable = 1#0.44
+
+#ODtots = [0.05,0.1,0.5,1,2,3]
+ODtots = np.logspace(-2.75,0,30)
+#ODtots = [1]
+Nstrains = [2,6,10,14,18,22]
+#Nstrains = np.linspace(1,25,23)
+alpha = 100
+m = -0.9
+
+multiplicityData = np.empty((len(ODtots),len(Nstrains)))
+multiplicityData[:] = np.nan
+
+
+for i, odt in enumerate(ODtots):
+    for j, N in enumerate(Nstrains):
+        ODeach = odt/N
+        ODeff = ODeach * np.exp(m*odt)
+        print(np.exp(m*odt))
+        pAtLeastOnce = 1 - np.exp(-alpha*ODeff)
+        pAtLeastOnceAll = pAtLeastOnce ** N
+        multiplicityData[i,j] = pAtLeastOnceAll
+        
+multiplicityData = multiplicityData * fractionTransformable       
+    
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(ODtots,multiplicityData)
+plt.xlabel('total OD')
+#plt.xscale('log')
+#plt.yscale('log')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+#plt.ylim(-0.05,0.5)
+plt.legend(Nstrains,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(Nstrains,multiplicityData.transpose())
+plt.xlabel('number of plasmids')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+plt.legend(ODtots,title='total OD',bbox_to_anchor =(1.6, 1.04))
+#plt.yscale('log')
+
+
+#%% PROBABILITY OF GETTING N plasmids AT A GIVEN ODTOT using BiBi
+
+fractionTransformable = 1#0.45
+
+ODtots = np.logspace(-1.5,0,30)
+#ODtots = [1]#np.logspace(-1.75,0.6,30)
+Nplasmids = [2,6,14,22]
+
+#Nplasmids = [14]
+#Nplasmids = np.linspace(2,26,25)
+alpha = 100
+m = -0.9
+q = 1-0.62
+s = 1-0.37
+
+pVS1PAll = np.empty((len(ODtots),len(Nplasmids)))
+pVS1PAll[:] = np.nan
+BBR1PAll = np.empty((len(ODtots),len(Nplasmids)))
+BBR1PAll[:] = np.nan
+BiBipAll = np.empty((len(ODtots),len(Nplasmids)))
+BiBipAll[:] = np.nan
+
+for i, odt in enumerate(ODtots):
+    for j, nplasms in enumerate(Nplasmids):
+        numberPBVS1strains = nplasms
+        numberBBR1strains = nplasms
+        numberBiBistrains = nplasms/2
+        
+        ODeachPVS1 = odt/numberPBVS1strains
+        ODeffPVS1 = ODeachPVS1 * np.exp(m*odt)
+        lamPVS1 = alpha*ODeffPVS1
+        # lamBBR1 = alpha*ODeffPVS1
+        
+        ODeachBiBi = odt/numberBiBistrains
+        ODeffBiBi = ODeachBiBi * np.exp(m*odt)
+        lamBiBi = alpha*ODeffBiBi
+        
+        kvals = np.arange(1,150)
+        PthisK_pvs1 = np.zeros(len(kvals)+1)
+        PthisK_bbr1 = np.zeros(len(kvals)+1)
+        PthisK_bibi = np.zeros(len(kvals)+1)
+        
+        for k in kvals:
+            PthisK_pvs1[k] = (lamPVS1**k)/math.factorial(k)*np.exp(-lamPVS1) * (1-(q**k))
+            PthisK_bbr1[k] = (lamPVS1**k)/math.factorial(k)*np.exp(-lamPVS1) * (1-(s**k))
+            PthisK_bibi[k] = (lamBiBi**k)/math.factorial(k)*np.exp(-lamBiBi) * (1-(q**k)) * (1-(s**k))
+            
+        pVS1PAll[i,j] = (np.sum(PthisK_pvs1)) ** numberPBVS1strains
+        BBR1PAll[i,j] = (np.sum(PthisK_bbr1)) ** numberBBR1strains
+        BiBipAll[i,j] = (np.sum(PthisK_bibi)) ** numberBiBistrains
+        
+
+# pVS1PAll = pVS1PAll * fractionTransformable
+# BiBipAll = BiBipAll * fractionTransformable
+# BBR1PAll = BBR1PAll * fractionTransformable
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+#plt.plot(np.log10(ODtots),BiBipAll)
+plt.plot(ODtots,BiBipAll,'--')
+#plt.plot(ODtots,pVS1PAll,'-')
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xticks(rotation=45)
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+#plt.yscale('log')
+#plt.ylim(0.0000001,5)
+plt.ylabel('fraction of cells \n expressing all plasmids')
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.9, 1.04))
+plt.title('BiBi strains')
+
+
+#%%
+my_cmap = ['b','orange','green','red','purple','brown']
+
+       
+#plt.plot(np.log10(ODtots),pVS1PAll,'--')
+#plt.plot(ODtots,pVS1PAll,'-')
+
+with sns.color_palette('bright', n_colors=4):
+    fig, ax = plt.subplots()
+    fig.set_size_inches(2, 2) 
+    plt.plot(np.log10(ODtots),pVS1PAll,'-')
+    plt.plot(np.log10(ODtots),BiBipAll,'--')
+
+
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+#plt.yscale('log')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+#plt.ylim(-0.05,0.5)
+# plt.yscale('log')
+# plt.ylim(0.0000001,5)
+plt.xticks(rotation=45)
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+plt.title('pVS1 strains vs \n BiBi strains')
+
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+#plt.plot(np.log10(ODtots),pVS1PAll,'--')
+plt.plot(ODtots,pVS1PAll,'-')
+
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+#plt.yscale('log')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+#plt.ylim(-0.05,0.5)
+# plt.yscale('log')
+# plt.ylim(0.0000001,5)
+plt.xticks(rotation=45)
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+plt.title('pVS1 strains')
+
+
+
+
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(np.log10(ODtots),np.divide(BiBipAll,pVS1PAll))
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+plt.yscale('log')
+plt.ylabel('fold difference in the fraction \n of cells expressing all plasmids')
+plt.ylim(0.5,10**2.5)
+plt.xlim(np.min(np.log10(ODtots)),np.max(np.log10(ODtots)))
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+plt.title('BiBi / pVS1 strains')
+
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(np.log10(ODtots),np.divide(pVS1PAll,BBR1PAll))
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+plt.yscale('log')
+plt.ylabel('fold difference in the fraction \n of cells expressing all plasmids')
+plt.ylim(0.5,10**2.5)
+plt.xlim(np.min(np.log10(ODtots)),np.max(np.log10(ODtots)))
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+plt.title('pVS1 / BBR1 strains')
+
+
+#%%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(np.log10(ODtots),np.divide(BiBipAll,BBR1PAll))
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+plt.yscale('log')
+plt.ylabel('fold difference in the fraction \n of cells expressing all plasmids')
+plt.ylim(0.5,10**2.5)
+plt.xlim(np.min(np.log10(ODtots)),np.max(np.log10(ODtots)))
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+plt.title('BiBi / BBR1 strains')
+
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(Nplasmids,BiBipAll.transpose())
+ax.xaxis.set_major_locator(MultipleLocator(4))
+ax.yaxis.set_major_locator(MultipleLocator(0.1))
+
+# # Change minor ticks to show every x
+# ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+# ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xlabel('number of plasmids')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+plt.legend(ODtots,title='total OD',bbox_to_anchor =(1.6, 1.04))
+plt.title('BiBi')
+plt.yscale('log')
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(Nplasmids,pVS1PAll.transpose())
+ax.xaxis.set_major_locator(MultipleLocator(4))
+ax.yaxis.set_major_locator(MultipleLocator(0.1))
+
+# # Change minor ticks to show every x
+# ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+# ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xlabel('number of plasmids')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+plt.legend(ODtots,title='total OD',bbox_to_anchor =(1.6, 1.04))
+plt.title('pVS1')
+plt.yscale('log')
+
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(Nplasmids,BiBipAll.transpose())
+plt.plot(Nplasmids,pVS1PAll.transpose())
+# # Change major ticks to show every 20.
+# ax.xaxis.set_major_locator(MultipleLocator(4))
+# ax.yaxis.set_major_locator(MultipleLocator(1))
+
+# # Change minor ticks to show every 5. (20/4 = 5)
+# ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(10))
+
+# # Turn grid on for both major and minor ticks and style minor slightly
+# # differently.
+# ax.grid(which='major', color='#CCCCCC', linestyle='-')
+# ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+# ax.grid(which='major', color='#CCCCCC', linestyle='-')
+# ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.grid(True, which="both",ls="-")
+plt.xlabel('number of plasmids')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+plt.legend(['BiBi','PVS1'],title='strains',bbox_to_anchor =(1.6, 1.04))
+#plt.title('pVS1')
+plt.yscale('log')
+
+
+
+#%%
+a = BiBipAll.transpose()
+b = pVS1PAll.transpose()
+fold = np.divide(a,b)
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(Nplasmids,fold)
+ax.xaxis.set_major_locator(MultipleLocator(4))
+# ax.yaxis.set_major_locator(MultipleLocator(0.1))
+
+# # # Change minor ticks to show every x
+# # ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+# # ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.yscale('log')
+plt.ylim(0.8,10**2.2)
+plt.xlim(8,np.max(Nplasmids))
+plt.xlabel('number of plasmids')
+plt.ylabel('fold difference in the fraction \n of cells expressing all plasmids')
+plt.legend(ODtots,title='total OD',bbox_to_anchor =(1.6, 1.04))
+plt.title('improvement of BiBi over pVS1')
+
+
+#%%
+#%% PROBABILITY OF GETTING N plasmids AT A GIVEN ODTOT using perfect BiBiBi
+
+fractionTransformable = 1#0.45
+
+ODtots = [0.05,0.1,0.5,1,2,3]
+ODtots = [1]#np.logspace(-1.75,0.6,30)
+Nplasmids = [6,10,14,18,22,30]
+Nplasmids = np.linspace(3,30,10)
+alpha = 100
+m = -0.9
+q = 1-0.99
+s = 1-0.99
+u = 1-0.99
+
+pVS1PAll = np.empty((len(ODtots),len(Nplasmids)))
+pVS1PAll[:] = np.nan
+BBR1PAll = np.empty((len(ODtots),len(Nplasmids)))
+BBR1PAll[:] = np.nan
+BiBiBipAll = np.empty((len(ODtots),len(Nplasmids)))
+BiBiBipAll[:] = np.nan
+
+for i, odt in enumerate(ODtots):
+    for j, nplasms in enumerate(Nplasmids):
+        numberPBVS1strains = nplasms
+        numberBBR1strains = nplasms
+        numberBiBistrains = nplasms/3
+        
+        ODeachPVS1 = odt/numberPBVS1strains
+        ODeffPVS1 = ODeachPVS1 * np.exp(m*odt)
+        lamPVS1 = alpha*ODeffPVS1
+        # lamBBR1 = alpha*ODeffPVS1
+        
+        ODeachBiBi = odt/numberBiBistrains
+        ODeffBiBi = ODeachBiBi * np.exp(m*odt)
+        lamBiBi = alpha*ODeffBiBi
+        
+        kvals = np.arange(1,150)
+        PthisK_pvs1 = np.zeros(len(kvals)+1)
+        PthisK_bbr1 = np.zeros(len(kvals)+1)
+        PthisK_bibibi = np.zeros(len(kvals)+1)
+        
+        for k in kvals:
+            PthisK_pvs1[k] = (lamPVS1**k)/math.factorial(k)*np.exp(-lamPVS1) * (1-(q**k))
+            PthisK_bbr1[k] = (lamPVS1**k)/math.factorial(k)*np.exp(-lamPVS1) * (1-(s**k))
+            PthisK_bibibi[k] = (lamBiBi**k)/math.factorial(k)*np.exp(-lamBiBi) * (1-(q**k)) * (1-(s**k)) * (1-(u**k))
+            
+        pVS1PAll[i,j] = (np.sum(PthisK_pvs1)) ** numberPBVS1strains
+        BBR1PAll[i,j] = (np.sum(PthisK_bbr1)) ** numberBBR1strains
+        BiBiBipAll[i,j] = (np.sum(PthisK_bibibi)) ** numberBiBistrains
+        
+
+# pVS1PAll = pVS1PAll * fractionTransformable
+# BiBipAll = BiBipAll * fractionTransformable
+# BBR1PAll = BBR1PAll * fractionTransformable
+
+#%%
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(np.log10(ODtots),BiBiBipAll)
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xticks(rotation=45)
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+plt.yscale('log')
+plt.ylim(0.0000001,5)
+plt.ylabel('fraction of cells \n expressing all plasmids')
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.9, 1.04))
+plt.title('BiBi strains')
+
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(np.log10(ODtots),pVS1PAll,'--')
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+#plt.yscale('log')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+#plt.ylim(-0.05,0.5)
+plt.yscale('log')
+plt.ylim(0.0000001,5)
+plt.xticks(rotation=45)
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+plt.title('pVS1 strains')
+
+
+#%%
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(np.log10(ODtots),np.divide(BiBiBipAll,pVS1PAll))
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+plt.yscale('log')
+plt.ylabel('fold difference in the fraction \n of cells expressing all plasmids')
+plt.ylim(0.5,10**2.5)
+plt.xlim(np.min(np.log10(ODtots)),np.max(np.log10(ODtots)))
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+plt.title('BiBi / pVS1 strains')
+
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(np.log10(ODtots),np.divide(pVS1PAll,BBR1PAll))
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+plt.yscale('log')
+plt.ylabel('fold difference in the fraction \n of cells expressing all plasmids')
+plt.ylim(0.5,10**2.5)
+plt.xlim(np.min(np.log10(ODtots)),np.max(np.log10(ODtots)))
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+plt.title('pVS1 / BBR1 strains')
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(np.log10(ODtots),np.divide(BiBiBipAll,BBR1PAll))
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+plt.yscale('log')
+plt.ylabel('fold difference in the fraction \n of cells expressing all plasmids')
+plt.ylim(0.5,10**2.5)
+plt.xlim(np.min(np.log10(ODtots)),np.max(np.log10(ODtots)))
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+plt.title('BiBi / BBR1 strains')
+
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(Nplasmids,BiBiBipAll.transpose())
+ax.xaxis.set_major_locator(MultipleLocator(4))
+ax.yaxis.set_major_locator(MultipleLocator(0.1))
+
+# # Change minor ticks to show every x
+# ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+# ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xlabel('number of plasmids')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+plt.legend(ODtots,title='total OD',bbox_to_anchor =(1.6, 1.04))
+plt.title('BiBi')
+plt.yscale('log')
+
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(Nplasmids,pVS1PAll.transpose())
+ax.xaxis.set_major_locator(MultipleLocator(4))
+ax.yaxis.set_major_locator(MultipleLocator(0.1))
+
+# # Change minor ticks to show every x
+# ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+# ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.xlabel('number of plasmids')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+plt.legend(ODtots,title='total OD',bbox_to_anchor =(1.6, 1.04))
+plt.title('pVS1')
+plt.yscale('log')
+
+#%%
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(Nplasmids,BiBiBipAll.transpose())
+plt.plot(Nplasmids,pVS1PAll.transpose())
+# # Change major ticks to show every 20.
+# ax.xaxis.set_major_locator(MultipleLocator(4))
+# ax.yaxis.set_major_locator(MultipleLocator(1))
+
+# # Change minor ticks to show every 5. (20/4 = 5)
+# ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+#ax.yaxis.set_minor_locator(AutoMinorLocator(10))
+
+# # Turn grid on for both major and minor ticks and style minor slightly
+# # differently.
+# ax.grid(which='major', color='#CCCCCC', linestyle='-')
+# ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+# ax.grid(which='major', color='#CCCCCC', linestyle='-')
+# ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.grid(True, which="both",ls="-")
+plt.xlabel('number of plasmids')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+plt.legend(['BiBi','PVS1'],title='strains',bbox_to_anchor =(1.6, 1.04))
+#plt.title('pVS1')
+plt.yscale('log')
+
+
+#%%
+
+a = BiBiBipAll.transpose()
+b = pVS1PAll.transpose()
+fold = np.divide(a,b)
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(Nplasmids,fold)
+ax.xaxis.set_major_locator(MultipleLocator(4))
+# ax.yaxis.set_major_locator(MultipleLocator(0.1))
+
+# # # Change minor ticks to show every x
+# # ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+# # ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.yscale('log')
+#plt.ylim(0.8,10**2.2)
+#plt.xlim(8,np.max(Nplasmids))
+plt.xlabel('number of plasmids')
+plt.ylabel('fold difference in the fraction \n of cells expressing all plasmids')
+plt.legend(ODtots,title='total OD',bbox_to_anchor =(1.6, 1.04))
+plt.title('improvement of BiBiBi over pVS1')
+
+
+

@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Dec 19 18:30:23 2023
+
+@author: simon_alamos
+"""
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+# to enable LaTeX in labels
+mpl.rcParams['text.usetex'] = True
+mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
+
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+import scipy as scipy
+from scipy import optimize
+from scipy.stats import iqr
+from scipy.stats import pearsonr
+
+# this is to set up the figure style
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+
+#%%
+def getRsquared(ydata, fittedY):
+    # can get the residual sum of squares 
+    residuals = ydata - fittedY
+    ss_res = np.sum(residuals**2)
+    #  get the total sum of squares 
+    ss_tot = np.sum((ydata-np.mean(ydata))**2)
+    # get the R squared value
+    r_squared = 1 - (ss_res / ss_tot)
+    
+    return r_squared
+
+#%% load the leica widefield data
+
+# load the experiment_database spreadsheet
+print('navigate to the folder where the experiment database file is stored - then select any file')
+file_path = filedialog.askopenfilename() # store the file path as a string
+lastFileSep = file_path.rfind(filesep) # find the position of the last path separator
+folderpath = file_path[0:lastFileSep] # get the part of the path corresponding to the folder where the chosen file was located
+experiment_database_filePath = folderpath + filesep + 'experiment_database.csv'
+experiment_database = pd.read_csv(experiment_database_filePath)
+
+# select which experiments to aggregate. Refer to 'experiment_database' spreadsheet for more info
+experimentIDs = ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+Leica_exp_database = experiment_database[condition]
+
+#initialize a dataframe to store values
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+Leica_data = pd.DataFrame([], columns=cols)
+
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in Leica_exp_database['Experiment_ID'].values:
+    thisExperiment = Leica_exp_database[Leica_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    Leica_data = pd.concat([Leica_data,expCountsData])
+
+# convert the counts to int64
+Leica_data = Leica_data.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+Leica_data['system'] = 'LeicaDM6B'
+
+# calculate the frequencies
+fractionTransformable = 0.55
+# since the labeled GFP and RFP strains are infiltrated at the same OD, this is the OD of each labeled strain
+Leica_data['fracGFP'] = Leica_data['NGFP']/(Leica_data['NBFP']*fractionTransformable)
+Leica_data['fracGFP'].loc[Leica_data['fracGFP']>1]=1
+Leica_data['fracRFP'] = Leica_data['NRFP']/(Leica_data['NBFP']*fractionTransformable)
+Leica_data['fracRFP'].loc[Leica_data['fracRFP']>1]=1
+Leica_data['NotGFP'] = 1 - Leica_data['fracGFP']
+Leica_data['NotRFP'] = 1 - Leica_data['fracRFP']
+
+
+#%% now load the confocal data
+
+# select which experiments to aggregate. Refer to 'experiment_database' spreadsheet for more info
+experimentIDs = ['18','19','20','21','22','23','24']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+Zeiss_exp_database = experiment_database[condition]
+
+#initialize a dataframe to store values
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+Zeiss_data = pd.DataFrame([], columns=cols)
+
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in Zeiss_exp_database['Experiment_ID'].values:
+    thisExperiment = Zeiss_exp_database[Zeiss_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + '/2023' + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    Zeiss_data = pd.concat([Zeiss_data,expCountsData])
+
+# convert the counts to int64
+Zeiss_data = Zeiss_data.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+Zeiss_data['system'] = 'lsm710'
+
+# calculate the frequencies
+Zeiss_data['fracGFP'] = Zeiss_data['NGFP']/(Zeiss_data['NBFP']*fractionTransformable)
+Zeiss_data['fracGFP'].loc[Zeiss_data['fracGFP']>1]=1
+Zeiss_data['fracRFP'] = Zeiss_data['NRFP']/(Zeiss_data['NBFP']*fractionTransformable)
+Zeiss_data['fracRFP'].loc[Zeiss_data['fracRFP']>1]=1
+Zeiss_data['NotGFP'] = 1 - Zeiss_data['fracGFP']
+Zeiss_data['NotRFP'] = 1 - Zeiss_data['fracRFP']
+
+
+#%% merge both datasets based on plant and infiltration IDs
+
+Both_scopes_data = pd.merge(Leica_data, Zeiss_data, how='right', on=['filename','plant'])
+
+
+
+#%% plot one versus the other
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# sns.scatterplot(data=ODbothBiBi,x='ObsPBoth_x',y='ObsPBoth_y',s=80, marker="o",color='royalblue',alpha=0.6)
+# sns.scatterplot(data=ODbothMix,x='ObsPBoth_x',y='ObsPBoth_y',s=80, marker="o",color='yellow',alpha=0.6)
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+sns.scatterplot(data=Both_scopes_data,x='fracRFP_x',y='fracGFP_y',s=40, marker="o",alpha=0.6,edgecolor='none',hue='plant', legend=False)
+#sns.scatterplot(data=ODboth,x='fracRFPconf',y='fracRFP',hue='ODtot',s=60, palette = P, marker="o")
+
+R = getRsquared(Both_scopes_data['fracRFP_x'], Both_scopes_data['fracGFP_y'])
+plt.plot([0.01,1],[0.01,1],'k-')
+plt.xlabel('fraction transformed \n with RFP (widefiled)')
+plt.ylabel('fraction transformed \n with RFP (confocal)')
+plt.xscale('log')
+plt.yscale('log')
+plt.xlim(0.01,1)
+plt.ylim(0.01,1)
+plt.title('comparing microscopes \n RFP \n R^2= ' + str(np.round(R,2)))
+plt.show()
+
+#%% plot one versus the other in a different way
+
+# remove BiBi data
+Both_scopes_data = Both_scopes_data[~Both_scopes_data['plant'].str.contains('BiBi|sep')]
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+# sns.scatterplot(data=ODbothBiBi,x='ObsPBoth_x',y='ObsPBoth_y',s=80, marker="o",color='royalblue',alpha=0.6)
+# sns.scatterplot(data=ODbothMix,x='ObsPBoth_x',y='ObsPBoth_y',s=80, marker="o",color='yellow',alpha=0.6)
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+totalODs = [0.1,0.5,2]
+markers = ['s','^','v']
+palette =['lightgreen','mediumturquoise','mediumorchid']
+
+Rs = np.zeros(len(totalODs))
+for idx, ODtot in enumerate(totalODs):
+    thisColor = palette[idx]
+    thisMarker = markers[idx]
+    data = Both_scopes_data[Both_scopes_data['ODtot_x']==ODtot]
+    plt.plot(data['fracGFP_x'],data['fracRFP_y'],color=thisColor,marker = thisMarker,linestyle = 'None',markeredgecolor='k')
+    R = getRsquared(data['fracGFP_x'], data['fracRFP_y'])
+    Rs[idx] = np.round(R,2)
+# sns.scatterplot(data=Both_scopes_data,x='fracGFP_x',y='fracRFP_y',s=40, marker="o",alpha=0.6,edgecolor='none',hue='plant', legend=False)
+#sns.scatterplot(data=ODboth,x='fracRFPconf',y='fracRFP',hue='ODtot',s=60, palette = P, marker="o")
+plt.plot([0.01,1],[0.01,1],'k-')
+plt.xlabel('fraction transformed \n with GFP (widefiled)')
+plt.ylabel('fraction transformed \n with GFP (confocal)')
+plt.xscale('log')
+plt.yscale('log')
+plt.xlim(0.04,1)
+plt.ylim(0.04,1)
+plt.title('comparing microscopes \n GFP')
+plt.legend(Rs,title = 'Pearson corr.', loc='upper right',bbox_to_anchor =(1.7, 1.04))
+plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

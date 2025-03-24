@@ -1,0 +1,629 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Nov 16 16:37:45 2023
+
+@author: simon_alamos
+"""
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Nov 16 16:08:53 2023
+
+@author: simon_alamos
+"""
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+# to enable LaTeX in labels
+mpl.rcParams['text.usetex'] = True
+mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
+
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+import math
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+import scipy as scipy
+from scipy import optimize
+from scipy.stats import iqr
+
+# this is to set up the figure style
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+#%% load the data and calculate means and errors
+
+GRdataPath = '/Users/simon_alamos/Documents/Shih_lab/agro_paper/Data/Glucoraphanin/4-4-24_glucoraphanin_results_norm.csv'
+GRdata = pd.read_csv(GRdataPath)
+
+
+MeanPerMix = GRdata.groupby(by=["mixID",'OD']).mean()
+ErrorPerMix = GRdata.groupby(by=["mixID",'OD']).std()
+MeanPerMix = MeanPerMix.reset_index()
+ErrorPerMix = ErrorPerMix.reset_index()
+
+BiBiMix1Means = MeanPerMix[MeanPerMix['mixID']=='pVS1-BBR1_BiBi']
+BiBiMix1Errors = ErrorPerMix[ErrorPerMix['mixID']=='pVS1-BBR1_BiBi']
+
+BiBiMix2Means = MeanPerMix[MeanPerMix['mixID']=='BBR1-pVS1_BiBi']
+BiBiMix2Errors = ErrorPerMix[ErrorPerMix['mixID']=='BBR1-pVS1_BiBi']
+
+pVS1MixMeans = MeanPerMix[MeanPerMix['mixID']=='pVS1_co']
+pVS1MixErrors = ErrorPerMix[ErrorPerMix['mixID']=='pVS1_co']
+
+BBR1MixMeans = MeanPerMix[MeanPerMix['mixID']=='BBR1_co']
+BBR1MixErrors = ErrorPerMix[ErrorPerMix['mixID']=='BBR1_co']
+
+ODvals = MeanPerMix['OD'].unique()
+
+
+#%% this was an earlier replicate of the same experiment
+
+GRdataPath2 = '/Users/simon_alamos/Documents/Shih_lab/Data/Mitch_data/1-31-24/Glucoraphanin_data.csv'
+GRdata2 = pd.read_csv(GRdataPath2)
+MeanPerMix2 = GRdata2.groupby(by=["mixID",'OD']).mean()
+ErrorPerMix2 = GRdata2.groupby(by=["mixID",'OD']).std()
+MeanPerMix2 = MeanPerMix2.reset_index()
+ErrorPerMix2 = ErrorPerMix2.reset_index()
+
+BiBiMix2Means_2 = MeanPerMix2[MeanPerMix2['mixID']=='BBR1-pVS1_BiBi']
+BiBiMix2Errors_2 = ErrorPerMix2[ErrorPerMix2['mixID']=='BBR1-pVS1_BiBi']
+
+BBR1MixMeans_2 = MeanPerMix2[MeanPerMix2['mixID']=='BBR1_co']
+BBR1MixErrors_2 = ErrorPerMix2[ErrorPerMix2['mixID']=='BBR1_co']
+
+ODvals2 = MeanPerMix2['OD'].unique()
+
+
+
+#%% make basic figures
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.errorbar(ODvals,BiBiMix1Means['Glucoraphanin'],BiBiMix1Errors['Glucoraphanin'],color='b',marker='s')
+plt.errorbar(ODvals,BiBiMix2Means['Glucoraphanin'],BiBiMix2Errors['Glucoraphanin'],color='r',marker='D')
+plt.errorbar(ODvals,pVS1MixMeans['Glucoraphanin'],pVS1MixErrors['Glucoraphanin'],color='pink',marker='>')
+plt.errorbar(ODvals,BBR1MixMeans['Glucoraphanin'],BBR1MixErrors['Glucoraphanin'],color='green',marker='v')
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(0.1))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.grid('major')
+
+plt.legend(['BiBi Mix1 (pVS1-BBR1)','BiBi Mix2 (BBR1-pVS1)','pVS1 coinfiltration','BBR1 coinfiltration'],bbox_to_anchor =(1.05, 1))
+plt.xlabel('total mix OD')
+plt.ylabel('Glucoraphanin')
+plt.xscale('log')
+#plt.yscale('log')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#plt.errorbar(ODvals,BiBiMix1Means['Glucoraphanin'],BiBiMix1Errors['Glucoraphanin'],color='b',marker='s')
+plt.errorbar(ODvals,BiBiMix2Means['Glucoraphanin'],BiBiMix2Errors['Glucoraphanin'],color='r',mec='k',marker='D',linestyle='None')
+#plt.errorbar(ODvals,pVS1MixMeans['Glucoraphanin'],pVS1MixErrors['Glucoraphanin'],color='pink',marker='>')
+plt.errorbar(ODvals[1:],BBR1MixMeans['Glucoraphanin'][1:],BBR1MixErrors['Glucoraphanin'][1:],color='green',mec='k',marker='v',linestyle='None')
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(0.1))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.grid('major')
+
+plt.legend(['BiBi Mix2 (BBR1-pVS1)','BBR1 coinfiltration'],bbox_to_anchor =(1.05, 1))
+plt.xlabel('total mix OD')
+plt.ylabel('Glucoraphanin')
+plt.xscale('log')
+plt.yscale('log')
+plt.ylim(0.02,15)
+
+
+#%% make basic figures of the earlier replicate, only 4 ODs
+
+# to plot raw data points on top of error bars
+nreps = 3
+nODs = 4
+GRdatarep2_temp = GRdata2[(GRdata2['OD']>0.01) & (GRdata2['OD']<2)]
+GRdatarep2 = GRdatarep2_temp[GRdatarep2_temp['mixID'].str.fullmatch('BBR1_co|BBR1-pVS1_BiBi')]
+GR_raw_counts_1d_bbr1 = np.array(GRdatarep2[GRdatarep2['mixID'].str.fullmatch('BBR1_co')]['Glucoraphanin'])
+GR_raw_counts_2d_bbr1 = GR_raw_counts_1d_bbr1.reshape(nODs, nreps)
+GR_raw_counts_1d_bibi = np.array(GRdatarep2[GRdatarep2['mixID'].str.fullmatch('BBR1-pVS1_BiBi')]['Glucoraphanin'])
+GR_raw_counts_2d_bibi = GR_raw_counts_1d_bibi.reshape(nODs, nreps)
+x_vals_temp = np.log10(ODvals)
+x_vals = np.tile(x_vals_temp, (nreps, 1))
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#plt.errorbar(ODvals,BiBiMix1Means_2['Glucoraphanin'],BiBiMix1Errors_2['Glucoraphanin'],color='b',marker='s')
+plt.errorbar(np.log10(ODvals2[1:5]),BiBiMix2Means_2['Glucoraphanin'][1:5],BiBiMix2Errors_2['Glucoraphanin'][1:5],color='r',marker='d',mec='k',linestyle = 'None')
+#plt.errorbar(ODvals,pVS1MixMeans_2['Glucoraphanin'],pVS1MixErrors_2['Glucoraphanin'],color='pink',marker='>')
+plt.errorbar(np.log10(ODvals2[1:5]),BBR1MixMeans_2['Glucoraphanin'][1:5],BBR1MixErrors_2['Glucoraphanin'][1:5],color='green',marker='v',mec='k',linestyle = 'None')
+plt.plot(x_vals.T,GR_raw_counts_2d_bibi,'rd')
+plt.plot(x_vals.T,GR_raw_counts_2d_bbr1,'g',marker = 'v',linestyle='None')
+# # Change major ticks to show every 20.
+# ax.xaxis.set_major_locator(MultipleLocator(0.5))
+# ax.yaxis.set_major_locator(MultipleLocator(2))
+# # Change minor ticks to show every 5. (20/4 = 5)
+# ax.xaxis.set_minor_locator(AutoMinorLocator(0.1))
+# ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# # Turn grid on for both major and minor ticks and style minor slightly
+# # differently.
+# ax.grid(which='major', color='#CCCCCC', linestyle='-')
+# ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+# plt.grid('major')
+plt.legend(['BiBi Mix2 (BBR1-pVS1)','BBR1 coinfiltration'],bbox_to_anchor =(2.25, 1))
+plt.xlabel('log10 mix OD')
+plt.ylabel('normalized glucoraphanin production')
+#plt.xscale('log')
+#plt.yscale('log')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#plt.errorbar(ODvals,BiBiMix1Means['Glucoraphanin'],BiBiMix1Errors['Glucoraphanin'],color='b',marker='s')
+plt.errorbar(np.log10(ODvals2[1:5]),BiBiMix2Means_2['Glucoraphanin'][1:5],BiBiMix2Errors_2['Glucoraphanin'][1:5],color='r',mec='k',marker='d',linestyle='None')
+#plt.errorbar(ODvals,pVS1MixMeans['Glucoraphanin'],pVS1MixErrors['Glucoraphanin'],color='pink',marker='>')
+plt.errorbar(np.log10(ODvals2[1:5]),BBR1MixMeans_2['Glucoraphanin'][1:5],BBR1MixErrors_2['Glucoraphanin'][1:5],color='green',mec='k',marker='v',linestyle='None')
+plt.plot(x_vals.T,GR_raw_counts_2d_bibi,'rd')
+plt.plot(x_vals.T,GR_raw_counts_2d_bbr1,'g',marker = 'v',linestyle='None')
+# # Change major ticks to show every 20.
+# ax.xaxis.set_major_locator(MultipleLocator(0.5))
+# ax.yaxis.set_major_locator(MultipleLocator(2))
+# # Change minor ticks to show every 5. (20/4 = 5)
+# ax.xaxis.set_minor_locator(AutoMinorLocator(0.1))
+# ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+# # Turn grid on for both major and minor ticks and style minor slightly
+# # differently.
+# ax.grid(which='major', color='#CCCCCC', linestyle='-')
+# ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+# plt.grid('major')
+plt.legend(['BiBi Mix2 (BBR1-pVS1)','BBR1 coinfiltration'],bbox_to_anchor =(1.05, 1))
+plt.xlabel('total mix OD')
+plt.ylabel('Glucoraphanin')
+#plt.xscale('log')
+plt.yscale('log')
+plt.ylim(0.02,15)
+
+
+
+#%% make basic figures of the earlier replicate, all ODs
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#plt.errorbar(ODvals,BiBiMix1Means_2['Glucoraphanin'],BiBiMix1Errors_2['Glucoraphanin'],color='b',marker='s')
+plt.errorbar(ODvals2,BiBiMix2Means_2['Glucoraphanin'],BiBiMix2Errors_2['Glucoraphanin'],color='r',marker='D')
+#plt.errorbar(ODvals,pVS1MixMeans_2['Glucoraphanin'],pVS1MixErrors_2['Glucoraphanin'],color='pink',marker='>')
+plt.errorbar(ODvals2,BBR1MixMeans_2['Glucoraphanin'],BBR1MixErrors_2['Glucoraphanin'],color='green',marker='v')
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(0.1))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.grid('major')
+
+plt.legend(['BiBi Mix2 (BBR1-pVS1)','BBR1 coinfiltration'],bbox_to_anchor =(2.25, 1))
+plt.xlabel('total mix OD')
+plt.ylabel('Glucoraphanin')
+plt.xscale('log')
+#plt.yscale('log')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+#plt.errorbar(ODvals,BiBiMix1Means['Glucoraphanin'],BiBiMix1Errors['Glucoraphanin'],color='b',marker='s')
+plt.errorbar(ODvals2,BiBiMix2Means_2['Glucoraphanin'],BiBiMix2Errors_2['Glucoraphanin'],color='r',mec='k',marker='D',linestyle='None')
+#plt.errorbar(ODvals,pVS1MixMeans['Glucoraphanin'],pVS1MixErrors['Glucoraphanin'],color='pink',marker='>')
+plt.errorbar(ODvals2,BBR1MixMeans_2['Glucoraphanin'],BBR1MixErrors_2['Glucoraphanin'],color='green',mec='k',marker='v',linestyle='None')
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(0.1))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+plt.grid('major')
+
+plt.legend(['BiBi Mix2 (BBR1-pVS1)','BBR1 coinfiltration'],bbox_to_anchor =(1.05, 1))
+plt.xlabel('total mix OD')
+plt.ylabel('Glucoraphanin')
+plt.xscale('log')
+plt.yscale('log')
+plt.ylim(0.02,15)
+plt.xlim(0.025,2.5)
+plt.show()
+
+
+
+
+#%% model: PROBABILITY OF GETTING 14 plasmids AT A GIVEN ODTOT using BiBi
+
+fractionTransformable = 0.44
+
+#ODtots = [0.05,0.1,0.5,1]
+ODtots = np.logspace(-1.5,0,30)
+#ODtots = ODvals
+Nplasmids = [6,10,14,18,22,26]
+Nplasmids = [14]
+#Nplasmids = np.linspace(2,26,25)
+alpha = 100
+m = -0.9
+q = 1-0.62
+s = 1-0.37
+
+pVS1PAll = np.empty((len(ODtots),len(Nplasmids)))
+pVS1PAll[:] = np.nan
+BBR1PAll = np.empty((len(ODtots),len(Nplasmids)))
+BBR1PAll[:] = np.nan
+BiBipAll = np.empty((len(ODtots),len(Nplasmids)))
+BiBipAll[:] = np.nan
+
+for i, odt in enumerate(ODtots):
+    for j, nplasms in enumerate(Nplasmids):
+        numberPBVS1strains = nplasms
+        numberBBR1strains = nplasms
+        numberBiBistrains = nplasms/2
+        
+        ODeachPVS1 = odt/numberPBVS1strains
+        ODeffPVS1 = ODeachPVS1 * np.exp(m*odt)
+        lamPVS1 = alpha*ODeffPVS1
+        # lamBBR1 = alpha*ODeffPVS1
+        
+        ODeachBiBi = odt/numberBiBistrains
+        ODeffBiBi = ODeachBiBi * np.exp(m*odt)
+        lamBiBi = alpha*ODeffBiBi
+        
+        kvals = np.arange(1,150)
+        PthisK_pvs1 = np.zeros(len(kvals)+1)
+        PthisK_bbr1 = np.zeros(len(kvals)+1)
+        PthisK_bibi = np.zeros(len(kvals)+1)
+        
+        for k in kvals:
+            PthisK_pvs1[k] = (lamPVS1**k)/math.factorial(k)*np.exp(-lamPVS1) * (1-(q**k))
+            PthisK_bbr1[k] = (lamPVS1**k)/math.factorial(k)*np.exp(-lamPVS1) * (1-(s**k))
+            PthisK_bibi[k] = (lamBiBi**k)/math.factorial(k)*np.exp(-lamBiBi) * (1-(q**k)) * (1-(s**k))
+            
+        pVS1PAll[i,j] = (np.sum(PthisK_pvs1)) ** numberPBVS1strains
+        BBR1PAll[i,j] = (np.sum(PthisK_bbr1)) ** numberBBR1strains
+        BiBipAll[i,j] = (np.sum(PthisK_bibi)) ** numberBiBistrains
+        
+
+pVS1PAll = pVS1PAll * fractionTransformable
+BiBipAll = BiBipAll * fractionTransformable
+BBR1PAll = BBR1PAll * fractionTransformable
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(np.log10(ODtots),BiBipAll)
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xticks(rotation=45)
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+plt.yscale('log')
+#plt.ylim(0.0000001,5)
+plt.ylabel('fraction of cells \n expressing all plasmids')
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.9, 1.04))
+plt.title('BiBi strains')
+
+
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(np.log10(ODtots),pVS1PAll,'--')
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+#plt.yscale('log')
+plt.ylabel('fraction of cells \n expressing all plasmids')
+#plt.ylim(-0.05,0.5)
+plt.yscale('log')
+#plt.ylim(0.0000001,5)
+plt.xticks(rotation=45)
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+plt.title('pVS1 strains')
+
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)        
+plt.plot(np.log10(ODtots),np.divide(BiBipAll,pVS1PAll))
+# Change major ticks to show every x.
+ax.xaxis.set_major_locator(MultipleLocator(0.5))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every x
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+plt.xlabel('log$_{10}$ total OD')
+#plt.xscale('log')
+plt.yscale('log')
+plt.ylabel('fold difference in the fraction \n of cells expressing all plasmids')
+plt.ylim(0.5,10**3)
+plt.xlim(np.min(np.log10(ODtots)),np.max(np.log10(ODtots)))
+plt.legend(Nplasmids,title='number of plasmids',bbox_to_anchor =(1.1, 1.04))
+plt.title('BiBi / pVS1 strains')
+
+#%% compare data with model
+
+
+
+# fig, ax = plt.subplots()
+# fig.set_size_inches(2, 2)        
+# plt.plot(ODtots,BiBipAll,'r--')
+# plt.plot(ODtots,pVS1PAll,'g--')
+# plt.xscale('log')
+# plt.yscale('log')
+
+# # fig, ax = plt.subplots()
+# # fig.set_size_inches(2, 2)        
+# # plt.plot(ODtots,BiBipAll/np.max(BiBipAll),'r--')
+# # plt.plot(ODtots,pVS1PAll/np.max(BiBipAll),'g--')
+# # plt.xscale('log')
+# # plt.yscale('log')
+# # plt.ylim(0.02,15)
+
+# fig, ax1 = plt.subplots(figsize=(2, 2))
+# ax2 = ax1.twinx()
+# ax1.plot(np.log10(ODtots),np.log10(BiBipAll),'r--')
+# ax1.plot(np.log10(ODtots),np.log10(pVS1PAll),'g--')
+# ax1.set_ylabel("log 10 predicted fraction of cells \n transformed with all plasmids")
+# ax1.set_xlabel('log10 OD')
+# ax1.set_ylim(-10,1.5)
+# ax2.errorbar(np.log10(ODvals),np.log10(BiBiMix2Means['Glucoraphanin']),np.log10(BiBiMix2Errors['Glucoraphanin']),color='r',mec='k',marker='D',linestyle='None')
+# ax2.errorbar(np.log10(ODvals),np.log10(BBR1MixMeans['Glucoraphanin']),np.log10(BBR1MixErrors['Glucoraphanin']),color='green',mec='k',marker='v',linestyle='None')
+# ax2.set_ylabel("log 10 glucoraphanin")
+
+# ax1.yscale('log')
+# ax2.yscale('log')
+
+fig, ax1 = plt.subplots(figsize=(2, 2))
+ax2 = ax1.twinx()
+ax1.plot(np.log10(ODtots),BiBipAll,'r--')
+ax1.plot(np.log10(ODtots),pVS1PAll,'g--')
+ax1.set_ylabel("log 10 predicted fraction of cells \n transformed with all plasmids")
+ax1.set_xlabel('log10 OD')
+ax1.set_yscale('log')
+ax1.set_ylim(-10,1.5)
+ax2.errorbar(np.log10(ODvals),BiBiMix2Means['Glucoraphanin'],BiBiMix2Errors['Glucoraphanin'],color='r',mec='k',marker='D',linestyle='None')
+ax2.errorbar(np.log10(ODvals),BBR1MixMeans['Glucoraphanin'],BBR1MixErrors['Glucoraphanin'],color='green',mec='k',marker='v',linestyle='None')
+#ax2.plot(np.log10(ODvals),BBR1MixMeans,color='green',mec='k',marker='v',linestyle='None',alpha=0.5)
+ax2.set_ylabel("log 10 glucoraphanin")
+ax2.set_yscale('log')
+
+
+# plot with raw data points on top of error bars
+
+nreps = 5
+nODs = 4
+GRdata2 = GRdata[GRdata['mixID'].str.fullmatch('BBR1_co|BBR1-pVS1_BiBi')]
+GR_raw_counts_1d_bbr1 = np.array(GRdata2[GRdata2['mixID'].str.fullmatch('BBR1_co')]['Glucoraphanin'])
+GR_raw_counts_2d_bbr1 = GR_raw_counts_1d_bbr1.reshape(nODs, nreps)
+GR_raw_counts_1d_bibi = np.array(GRdata2[GRdata2['mixID'].str.fullmatch('BBR1-pVS1_BiBi')]['Glucoraphanin'])
+GR_raw_counts_2d_bibi = GR_raw_counts_1d_bibi.reshape(nODs, nreps)
+x_vals_temp = np.log10(ODvals)
+x_vals = np.tile(x_vals_temp, (5, 1))
+
+
+fig, ax1 = plt.subplots(figsize=(2, 2))
+ax2 = ax1.twinx()
+ax1.plot(np.log10(ODtots),BiBipAll,'r--')
+ax1.plot(np.log10(ODtots),pVS1PAll,'g--')
+ax1.set_ylabel("log 10 predicted fraction of cells \n transformed with all plasmids")
+ax1.set_xlabel('log10 OD')
+ax1.set_yscale('log')
+ax1.set_ylim(-10,1.5)
+ax2.errorbar(np.log10(ODvals),BiBiMix2Means['Glucoraphanin'],BiBiMix2Errors['Glucoraphanin'],color='r',mec='k',marker='D',linestyle='None')
+ax2.errorbar(np.log10(ODvals),BBR1MixMeans['Glucoraphanin'],BBR1MixErrors['Glucoraphanin'],color='green',mec='k',marker='v',linestyle='None')
+ax2.plot(x_vals.T,GR_raw_counts_2d_bibi,'rd')
+ax2.plot(x_vals.T,GR_raw_counts_2d_bbr1,'g',marker = 'v',linestyle='None')
+ax2.set_ylabel("log 10 glucoraphanin")
+ax2.set_yscale('log')
+
+
+
+
+
+
+fig, ax1 = plt.subplots(figsize=(2, 2))
+ax2 = ax1.twinx()
+ax1.plot(np.log10(ODtots),BiBipAll,'r--')
+ax1.plot(np.log10(ODtots),pVS1PAll,'g--')
+ax1.set_ylabel("predicted fraction of cells \n transformed with all plasmids")
+ax1.set_xlabel('log10 OD')
+#ax1.set_ylim(-10,0.5)
+ax2.errorbar(np.log10(ODvals),BiBiMix2Means['Glucoraphanin'],BiBiMix2Errors['Glucoraphanin'],color='r',mec='k',marker='D',linestyle='None')
+ax2.errorbar(np.log10(ODvals),BBR1MixMeans['Glucoraphanin'],BBR1MixErrors['Glucoraphanin'],color='green',mec='k',marker='v',linestyle='None')
+ax2.plot(x_vals.T,GR_raw_counts_2d_bibi,'rd')
+ax2.plot(x_vals.T,GR_raw_counts_2d_bbr1,'g',marker = 'v',linestyle='None')
+ax2.set_ylabel("glucoraphanin")
+#ax2.set_yscale('log')
+
+
+fig, ax1 = plt.subplots(figsize=(2, 2))
+plt.errorbar(BiBipAll,BiBiMix2Means['Glucoraphanin'],BiBiMix2Errors['Glucoraphanin'],color='r',mec='k',marker='D')
+plt.errorbar(pVS1PAll,BBR1MixMeans['Glucoraphanin'],BBR1MixErrors['Glucoraphanin'],color='green',mec='k',marker='v')
+plt.xlabel('predicted fraction \n of cells expressing all plasmids')
+plt.ylabel('Glucoraphanin production')
+#plt.xscale('log')
+#plt.yscale('log')
+
+
+fig, ax1 = plt.subplots(figsize=(2, 2))
+plt.errorbar(BiBiMix2Means['Glucoraphanin'],BiBipAll,xerr=BiBiMix2Errors['Glucoraphanin'],color='r',mec='k',marker='D')
+plt.errorbar(BBR1MixMeans['Glucoraphanin'],pVS1PAll,xerr=BBR1MixErrors['Glucoraphanin'],color='green',mec='k',marker='v')
+plt.ylabel('predicted fraction \n of cells expressing all plasmids')
+plt.xlabel('Glucoraphanin production')
+#plt.xscale('log')
+#plt.yscale('log')
+
+
+#%%
+goodData = GRdata[(GRdata['mixID']=='BBR1_co') | (GRdata['mixID']=='BBR1-pVS1_BiBi')]
+
+XsCo = []
+XsBiBi = []
+YsCo = []
+YsBiBi = []
+
+fig, ax1 = plt.subplots(figsize=(2, 2))
+for i, od in enumerate(ODvals):
+    BBR1prediction = pVS1PAll[i]
+    BiBiprediction = BiBipAll[i]
+    thisOD_BBR1co = goodData[(goodData['mixID']=='BBR1_co') & (goodData['OD']==od)]['Glucoraphanin']
+    thisOD_BiBi = goodData[(goodData['mixID']=='BBR1-pVS1_BiBi') & (goodData['OD']==od)]['Glucoraphanin']
+    
+    XsCo = np.concatenate((XsCo,np.ones(len(thisOD_BBR1co))*BBR1prediction))
+    YsCo = np.concatenate((YsCo,thisOD_BBR1co.values))
+    XsBiBi = np.concatenate((XsBiBi,np.ones(len(thisOD_BiBi))*BiBiprediction))
+    YsBiBi = np.concatenate((YsBiBi,thisOD_BiBi.values))
+    
+    plt.plot(np.ones(len(thisOD_BBR1co))*BBR1prediction,thisOD_BBR1co,'go',alpha=0.3,mec='None')
+    plt.plot(np.ones(len(thisOD_BiBi))*BiBiprediction,thisOD_BiBi,'ro',alpha=0.3,mec='None')
+plt.xlabel('predicted fraction \n of cells expressing all plasmids')
+plt.ylabel('Glucoraphanin production')
+plt.yscale('log')
+plt.xscale('log')
+
+fig, ax1 = plt.subplots(figsize=(2, 2))
+plt.plot(XsCo,YsCo,'gv',alpha=0.4,mec='None')
+plt.plot(XsBiBi,YsBiBi,'rD',alpha=0.4,mec='None')
+plt.xlabel('predicted fraction \n of cells expressing all plasmids')
+plt.ylabel('Glucoraphanin production')
+
+
+X = np.concatenate((XsCo,XsBiBi))
+Y = np.concatenate((YsCo,YsBiBi))
+z = np.polyfit(X, Y, 1)
+fig, ax1 = plt.subplots(figsize=(2, 2))
+plt.plot(X,Y,'o',alpha=0.4)
+plt.plot(X,z[1]+X*z[0],'k-')
+plt.xlabel('predicted fraction \n of cells expressing all plasmids')
+plt.ylabel('Glucoraphanin production')
+
+
+
+slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(X, Y)
+fig, ax1 = plt.subplots(figsize=(2, 2))
+#plt.plot(X,Y,'o')
+plt.plot(XsCo,YsCo,'gv',alpha=0.4,mec='None')
+plt.plot(XsBiBi,YsBiBi,'rD',alpha=0.4,mec='None')
+XforPlotFit = np.logspace(-8.5,np.log(np.max(X)*1.8),200)
+XforPlotFit = np.linspace(10**-8,0.5,200)
+plt.plot(XforPlotFit,intercept+XforPlotFit*slope,'k--')
+plt.xlabel('predicted fraction \n of cells expressing all plasmids')
+plt.ylabel('Glucoraphanin production')
+plt.title('$R^2$ = '+str(np.round(r_value**2,2)))
+plt.yscale('log')
+plt.xscale('log')
+
+
+X2 = np.sort(X)[:,np.newaxis]
+a, b, c, d = np.linalg.lstsq(X2, Y)
+fig, ax1 = plt.subplots(figsize=(2, 2))
+#plt.plot(X, Y, 'bo')
+plt.plot(XsCo,YsCo,'gv',alpha=0.4,mec='None')
+plt.plot(XsBiBi,YsBiBi,'rD',alpha=0.4,mec='None')
+plt.plot(np.sort(X), a*np.sort(X), 'r-')
+# plt.ylim(10**-4,10**1.2)
+# plt.xscale('log')
+# plt.yscale('log')
+plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+

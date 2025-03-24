@@ -1,0 +1,598 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Dec 18 10:30:00 2023
+
+@author: simon_alamos
+"""
+
+#%%
+import pandas as pd
+import seaborn as sns 
+import numpy as np
+import matplotlib as mpl
+# to enable LaTeX in labels
+mpl.rcParams['text.usetex'] = True
+mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
+
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import cm
+
+
+# This is to figure out what is the path separator symbol in the user operating system
+import os
+filesep = os.sep
+
+# This is to let the user pick the folder where the raw data is stored without having to type the path
+# I got it from https://stackoverflow.com/questions/9319317/quick-and-easy-file-dialog-in-python
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+
+
+from sklearn.metrics import r2_score
+
+from string import digits
+
+from scipy import stats
+import scipy as scipy
+from scipy import optimize
+from scipy.stats import iqr
+
+# this is to set up the figure style
+plt.style.use('default')
+# Say, "the default sans-serif font is COMIC SANS"
+mpl.rcParams['font.sans-serif'] = "Arial"
+# Then, "ALWAYS use sans-serif fonts"
+mpl.rcParams['font.family'] = "sans-serif"
+mpl.rcParams['font.size']= 9
+
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+
+
+
+#%% grab all the data
+
+# load the experiment_database spreadsheet
+print('navigate to the folder where the experiment database file is stored - then select any file')
+file_path = filedialog.askopenfilename() # store the file path as a string
+lastFileSep = file_path.rfind(filesep) # find the position of the last path separator
+folderpath = file_path[0:lastFileSep] # get the part of the path corresponding to the folder where the chosen file was located
+experiment_database_filePath = folderpath + filesep + 'experiment_database.csv'
+experiment_database = pd.read_csv(experiment_database_filePath)
+
+# select titration experiments to aggregate. Refer to 'experiment_database' spreadsheet for more info
+dilutionIDs = ['1','2','3','4','5','6','9','12','14','17']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in dilutionIDs for x in allIDs]
+ODdilution_exp_database = experiment_database[condition]
+
+# now aggregate the BiBi-related experiments
+BiBiIDs = ['7','8','10','11','13','15','16']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in BiBiIDs for x in allIDs]
+BiBi_exp_database = experiment_database[condition]
+
+#initialize a dataframe to store the values of the titration experiments 
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+
+ODdata = pd.DataFrame([], columns=cols)
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in ODdilution_exp_database['Experiment_ID'].values:
+    thisExperiment = ODdilution_exp_database[ODdilution_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    ODdata = pd.concat([ODdata,expCountsData])
+# convert the counts to int64
+ODdata = ODdata.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+
+
+BiBidata = pd.DataFrame([], columns=cols)
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in BiBi_exp_database['Experiment_ID'].values:
+    thisExperiment = BiBi_exp_database[BiBi_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    BiBidata = pd.concat([BiBidata,expCountsData])
+# convert the counts to int64
+BiBidata = BiBidata.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+
+
+
+# select C58C1 experiments to aggregate. Refer to 'experiment_database' spreadsheet for more info
+experimentIDs = ['25','26','27']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+C58ODdilution_exp_database = experiment_database[condition]
+#initialize a dataframe to store values
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+C58ODdata = pd.DataFrame([], columns=cols)
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in C58ODdilution_exp_database['Experiment_ID'].values:
+    thisExperiment = C58ODdilution_exp_database[C58ODdilution_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    C58ODdata = pd.concat([C58ODdata,expCountsData])
+# convert the counts to int64
+C58ODdata = C58ODdata.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+
+
+
+# select non-competititive OD titration experiments to aggregate. Refer to 'experiment_database' spreadsheet for more info
+experimentIDs = ['28']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+NoComp_exp_database = experiment_database[condition]
+#initialize a dataframe to store values
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+NoCompODdata = pd.DataFrame([], columns=cols)
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS/'
+for expID in NoComp_exp_database['Experiment_ID'].values:
+    thisExperiment = NoComp_exp_database[NoComp_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = commonPath + filesep + microscopeSystem + filesep + date + filesep + resultsSuffix
+    expCountsData = pd.read_csv(resultsPath)
+    NoCompODdata = pd.concat([NoCompODdata,expCountsData])
+# convert the counts to int64
+NoCompODdata = NoCompODdata.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+
+
+# select non-competititive Zeiss OD titration experiments to aggregate. Refer to 'experiment_database' spreadsheet for more info
+experimentIDs = ['29']
+experiment_database["Experiment_ID"]=experiment_database["Experiment_ID"].values.astype(str)
+allIDs = experiment_database['Experiment_ID'].values
+condition = [x in experimentIDs for x in allIDs]
+NoCompZeiss_exp_database = experiment_database[condition]
+#initialize a dataframe to store values
+cols = ['filename','plant','ODtot','OD','NBFP','NGFP','NRFP','NBoth','meanAvgFluoGFP','sdAvgFluoGFP',
+        'meanAvgFluoRFP','sdAvgFluoRFP','meanIntFluoGFP','sdIntFluoGFP','meanIntFluoRFP','sdIntFluoRFP']  
+NoCompZeissODdata = pd.DataFrame([], columns=cols)
+# open the nuclei_counts results of each of the experiments we're interested in
+commonPath = '/Volumes/JSALAMOS'
+for expID in NoCompZeiss_exp_database['Experiment_ID'].values:
+    thisExperiment = NoCompZeiss_exp_database[NoCompZeiss_exp_database['Experiment_ID']==expID]
+    microscopeSystem = thisExperiment['System'].values[0]
+    date = str(thisExperiment['Date'].values[0])
+    resultsSuffix = 'experiment_' + expID + '_nuclei_counts.csv'
+    resultsPath = '/Volumes/JSALAMOS/lsm710/2024/1-1-24/experiment_29_nuclei_counts.csv'
+    expCountsData = pd.read_csv(resultsPath)
+    NoCompZeissODdata = pd.concat([NoCompZeissODdata,expCountsData])
+# convert the counts to int64
+NoCompZeissODdata = NoCompZeissODdata.astype({"NBFP": int, "NGFP": int, "NRFP": int,"NBoth": int})
+
+
+#%% calculate some relevant frequencies
+
+fractionTransformable = 0.5
+
+ODdata['ODoneStrain'] = ODdata['OD']/2
+ODdata['fracGFP'] = ODdata['NGFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracGFP'].loc[ODdata['fracGFP']>1]=1
+ODdata['fracRFP'] = ODdata['NRFP']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracRFP'].loc[ODdata['fracRFP']>1]=1
+ODdata['NotGFP'] = 1 - ODdata['fracGFP']
+ODdata['NotRFP'] = 1 - ODdata['fracRFP']
+ODdata['fracBoth'] = ODdata['NBoth']/(ODdata['NBFP']*fractionTransformable)
+ODdata['fracBoth'].loc[ODdata['fracBoth']>1]=1
+ODdata['RedGivenGreen'] = ODdata['NBoth']/ODdata['NGFP'] # what fraction of those that express GFP, also express RFP
+ODdata['GreenGivenRed'] = ODdata['NBoth']/ODdata['NRFP'] # what fraction of those that express RFP, also express GFP
+ODdata['expBoth'] = ODdata['fracGFP'] * ODdata['fracRFP']
+
+BiBidata['ODoneStrain'] = BiBidata['OD']/2
+BiBidata['fracGFP'] = BiBidata['NGFP']/(BiBidata['NBFP']*fractionTransformable)
+BiBidata['fracGFP'].loc[BiBidata['fracGFP']>1]=1
+BiBidata['fracRFP'] = BiBidata['NRFP']/(BiBidata['NBFP']*fractionTransformable)
+BiBidata['fracRFP'].loc[BiBidata['fracRFP']>1]=1
+BiBidata['NotGFP'] = 1 - BiBidata['fracGFP']
+BiBidata['NotRFP'] = 1 - BiBidata['fracRFP']
+BiBidata['fracBoth'] = BiBidata['NBoth']/(BiBidata['NBFP']*fractionTransformable)
+BiBidata['fracBoth'].loc[BiBidata['fracBoth']>1]=1
+BiBidata['RedGivenGreen'] = BiBidata['NBoth']/BiBidata['NGFP'] # what fraction of those that express GFP, also express RFP
+BiBidata['GreenGivenRed'] = BiBidata['NBoth']/BiBidata['NRFP'] # what fraction of those that express RFP, also express GFP
+BiBidata['expBoth'] = BiBidata['fracGFP'] * BiBidata['fracRFP']
+
+BiBiOnlyData = BiBidata[BiBidata['filename'].str.contains('BiBi')]
+SepBiBiData = BiBidata[BiBidata['filename'].str.contains('sep')]
+
+
+C58ODdata['ODoneStrain'] = C58ODdata['OD']/2
+C58ODdata['fracGFP'] = C58ODdata['NGFP']/(C58ODdata['NBFP']*fractionTransformable)
+C58ODdata['fracGFP'].loc[C58ODdata['fracGFP']>1]=1
+C58ODdata['fracRFP'] = C58ODdata['NRFP']/(C58ODdata['NBFP']*fractionTransformable)
+C58ODdata['fracRFP'].loc[C58ODdata['fracRFP']>1]=1
+C58ODdata['NotGFP'] = 1 - C58ODdata['fracGFP']
+C58ODdata['NotRFP'] = 1 - C58ODdata['fracRFP']
+C58ODdata['fracBoth'] = C58ODdata['NBoth']/(C58ODdata['NBFP']*fractionTransformable)
+C58ODdata['fracBoth'].loc[C58ODdata['fracBoth']>1]=1
+C58ODdata['RedGivenGreen'] = C58ODdata['NBoth']/C58ODdata['NGFP'] # what fraction of those that express GFP, also express RFP
+C58ODdata['GreenGivenRed'] = C58ODdata['NBoth']/C58ODdata['NRFP'] # what fraction of those that express RFP, also express GFP
+C58ODdata['expBoth'] = C58ODdata['fracGFP'] * C58ODdata['fracRFP']
+
+NoCompODdata['ODoneStrain'] = NoCompODdata['OD']/2
+NoCompODdata['fracGFP'] = NoCompODdata['NGFP']/(NoCompODdata['NBFP']*fractionTransformable)
+NoCompODdata['fracGFP'].loc[NoCompODdata['fracGFP']>1]=1
+NoCompODdata['fracRFP'] = NoCompODdata['NRFP']/(NoCompODdata['NBFP']*fractionTransformable)
+NoCompODdata['fracRFP'].loc[NoCompODdata['fracRFP']>1]=1
+NoCompODdata['NotGFP'] = 1 - NoCompODdata['fracGFP']
+NoCompODdata['NotRFP'] = 1 - NoCompODdata['fracRFP']
+NoCompODdata['fracBoth'] = NoCompODdata['NBoth']/(NoCompODdata['NBFP']*fractionTransformable)
+NoCompODdata['fracBoth'].loc[NoCompODdata['fracBoth']>1]=1
+NoCompODdata['RedGivenGreen'] = NoCompODdata['NBoth']/NoCompODdata['NGFP'] # what fraction of those that express GFP, also express RFP
+NoCompODdata['GreenGivenRed'] = NoCompODdata['NBoth']/NoCompODdata['NRFP'] # what fraction of those that express RFP, also express GFP
+NoCompODdata['expBoth'] = NoCompODdata['fracGFP'] * NoCompODdata['fracRFP']
+
+
+NoCompZeissODdata['ODoneStrain'] = NoCompZeissODdata['OD']/2
+NoCompZeissODdata['fracGFP'] = NoCompZeissODdata['NGFP']/(NoCompZeissODdata['NBFP']*fractionTransformable)
+NoCompZeissODdata['fracGFP'].loc[NoCompZeissODdata['fracGFP']>1]=1
+NoCompZeissODdata['fracRFP'] = NoCompZeissODdata['NRFP']/(NoCompZeissODdata['NBFP']*fractionTransformable)
+NoCompZeissODdata['fracRFP'].loc[NoCompZeissODdata['fracRFP']>1]=1
+NoCompZeissODdata['NotGFP'] = 1 - NoCompZeissODdata['fracGFP']
+NoCompZeissODdata['NotRFP'] = 1 - NoCompZeissODdata['fracRFP']
+NoCompZeissODdata['fracBoth'] = NoCompZeissODdata['NBoth']/(NoCompZeissODdata['NBFP']*fractionTransformable)
+NoCompZeissODdata['fracBoth'].loc[NoCompZeissODdata['fracBoth']>1]=1
+NoCompZeissODdata['RedGivenGreen'] = NoCompZeissODdata['NBoth']/NoCompZeissODdata['NGFP'] # what fraction of those that express GFP, also express RFP
+NoCompZeissODdata['GreenGivenRed'] = NoCompZeissODdata['NBoth']/NoCompZeissODdata['NRFP'] # what fraction of those that express RFP, also express GFP
+NoCompZeissODdata['expBoth'] = NoCompZeissODdata['fracGFP'] * NoCompZeissODdata['fracRFP']
+#%% take averages and errors
+
+MeansTitrationData = ODdata.groupby(by=["ODoneStrain"]).mean()
+ErrorsTitrationData= ODdata.groupby(by=["ODoneStrain"]).sem()
+
+MeansBiBiData = BiBidata.groupby(by=["ODoneStrain"]).mean()
+ErrorsBiBiData= BiBidata.groupby(by=["ODoneStrain"]).sem()
+
+MeansBiBiOnlyData = BiBiOnlyData.groupby(by=["ODoneStrain"]).mean()
+ErrorsBiBiOnlyData = BiBiOnlyData.groupby(by=["ODoneStrain"]).sem()
+
+MeansSepOnlyData = SepBiBiData.groupby(by=["ODoneStrain"]).mean()
+ErrorsSepOnlyData = SepBiBiData.groupby(by=["ODoneStrain"]).sem()
+
+MeansC58Data = C58ODdata.groupby(by=["ODoneStrain"]).mean()
+ErrorsC58Data = C58ODdata.groupby(by=["ODoneStrain"]).sem()
+
+MeansNoCompData = NoCompODdata.groupby(by=["ODoneStrain"]).mean()
+ErrorsNoComData = NoCompODdata.groupby(by=["ODoneStrain"]).sem()
+
+MeansNoCompZeissData = NoCompZeissODdata.groupby(by=["ODoneStrain"]).mean()
+ErrorsNoComZeissData = NoCompZeissODdata.groupby(by=["ODoneStrain"]).sem()
+
+
+#%%
+BiBiOnlyData = BiBidata[BiBidata['filename'].str.contains('BiBi')]
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot(SepBiBiData['expBoth'],SepBiBiData['fracBoth'],'bo',ms=4,alpha=0.2,mec='none')
+plt.plot(BiBiOnlyData['expBoth'],BiBiOnlyData['fracBoth'],'yo',ms=4,alpha=0.4,mec='none')
+
+plt.plot([0.0005,1],[0.0005,1],'k--')
+plt.ylabel('observed fraction of co-transformations')
+plt.xlabel('expected fraction of co-transformations')
+plt.xscale('log')
+plt.yscale('log')
+plt.title('BiBi and sep data')
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot([0.001,1],[0.001,1],'k--')
+
+plt.plot(ODdata['fracBoth'],ODdata['expBoth'],'o',color='b',ms=4,alpha=0.2,mec='none',label='_nolegend_')
+plt.plot(SepBiBiData['fracBoth'],SepBiBiData['expBoth'],'o',color='g',ms=4,alpha=0.2,mec='none',label='_nolegend_')
+plt.plot(BiBiOnlyData['fracBoth'],BiBiOnlyData['expBoth'],'o',color = 'r',ms=4,alpha=0.3,mec='none',label='_nolegend_')
+
+plt.errorbar(MeansSepOnlyData['fracBoth'], MeansSepOnlyData['expBoth'], xerr= ErrorsSepOnlyData['fracBoth'],yerr= ErrorsSepOnlyData['expBoth'],
+             ls='none',marker='o',mfc='limegreen',mec='k',color='k', ms=5)
+
+plt.errorbar(MeansTitrationData['fracBoth'], MeansTitrationData['expBoth'], xerr= ErrorsTitrationData['fracBoth'],yerr= ErrorsTitrationData['expBoth'],
+             ls='none',marker='o',mfc='royalblue',mec='k',color='k', ms=5)
+
+plt.errorbar(MeansBiBiOnlyData['fracBoth'], MeansBiBiOnlyData['expBoth'], xerr= ErrorsBiBiOnlyData['fracBoth'],yerr= ErrorsBiBiOnlyData['expBoth'],
+             ls='none',marker='o',mfc='salmon',mec='k',color='k', ms=5)
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.2))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+
+
+plt.xlabel('observed')
+plt.ylabel('expected if independent')
+plt.title('co-transformation frequencies')
+plt.legend(['y=x','mixed strains (pVS1 Bi)','mixed strains (pVS1 Bi + BBR1 Bi)','BiBi strains'],title = 'mean $\pm$ SEM',bbox_to_anchor =(1.05, 1))
+plt.xscale('log')
+plt.yscale('log')
+
+#%% exclude the bibi and sep experiments
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot([0.001,1],[0.001,1],'k--')
+
+
+ODdata005 = ODdata[ODdata['ODtot']==0.05]
+ODdata01 = ODdata[ODdata['ODtot']==0.1]
+ODdata05 = ODdata[ODdata['ODtot']==0.5]
+ODdata1 = ODdata[ODdata['ODtot']==1]
+ODdata2 = ODdata[ODdata['ODtot']==2]
+ODdata3 = ODdata[ODdata['ODtot']==2]
+
+Means005 = ODdata005.groupby(by=["ODoneStrain"]).mean()
+Errors005= ODdata005.groupby(by=["ODoneStrain"]).sem()
+
+Means01 = ODdata01.groupby(by=["ODoneStrain"]).mean()
+Errors01= ODdata01.groupby(by=["ODoneStrain"]).sem()
+
+Means05 = ODdata05.groupby(by=["ODoneStrain"]).mean()
+Errors05= ODdata05.groupby(by=["ODoneStrain"]).sem()
+
+Means1 = ODdata1.groupby(by=["ODoneStrain"]).mean()
+Errors1 = ODdata1.groupby(by=["ODoneStrain"]).sem()
+
+Means2 = ODdata2.groupby(by=["ODoneStrain"]).mean()
+Errors2 = ODdata2.groupby(by=["ODoneStrain"]).sem()
+
+Means3 = ODdata3.groupby(by=["ODoneStrain"]).mean()
+Errors3 = ODdata3.groupby(by=["ODoneStrain"]).sem()
+
+palette =['khaki','limegreen','mediumturquoise','cornflowerblue','mediumorchid','brown']
+
+
+# plt.plot(ODdata005['fracBoth'],ODdata005['expBoth'],'o',color='khaki',ms=4,alpha=0.7,mec='none',label='_nolegend_')
+plt.errorbar(Means005['fracBoth'], Means005['expBoth'], xerr= Errors005['fracBoth'],yerr= Errors005['expBoth'],
+              ls='none',marker='o',mfc='khaki',mec='k',color='khaki', ms=5,linewidth=1)
+
+# plt.plot(ODdata01['fracBoth'],ODdata01['expBoth'],'s',color='limegreen',ms=4,alpha=0.7,mec='none',label='_nolegend_')
+plt.errorbar(Means01['fracBoth'], Means01['expBoth'], xerr= Errors01['fracBoth'],yerr= Errors01['expBoth'],
+              ls='none',marker='s',mfc='limegreen',mec='k',color='limegreen', ms=5,linewidth=1)
+
+# plt.plot(ODdata05['fracBoth'],ODdata05['expBoth'],'^',color='mediumturquoise',ms=4,alpha=0.7,mec='none',label='_nolegend_')
+plt.errorbar(Means05['fracBoth'], Means05['expBoth'], xerr= Errors05['fracBoth'],yerr= Errors05['expBoth'],
+              ls='none',marker='^',mfc='mediumturquoise',mec='k',color='mediumturquoise', ms=6,linewidth=1)
+
+# plt.plot(ODdata1['fracBoth'],ODdata1['expBoth'],'<',color='cornflowerblue',ms=4,alpha=0.7,mec='none',label='_nolegend_')
+plt.errorbar(Means1['fracBoth'], Means1['expBoth'], xerr= Errors1['fracBoth'],yerr= Errors1['expBoth'],
+              ls='none',marker='d',mfc='cornflowerblue',mec='k',color='cornflowerblue', ms=5,linewidth=1)
+
+# plt.plot(ODdata2['fracBoth'],ODdata2['expBoth'],'>',color='mediumorchid',ms=4,alpha=0.7,mec='none',label='_nolegend_')
+plt.errorbar(Means2['fracBoth'], Means2['expBoth'], xerr= Errors2['fracBoth'],yerr= Errors2['expBoth'],
+              ls='none',marker='v',mfc='mediumorchid',mec='k',color='mediumorchid', ms=6,linewidth=1)
+
+# plt.plot(ODdata3['fracBoth'],ODdata3['expBoth'],'d',color='firebrick',ms=4,alpha=0.7,mec='none',label='_nolegend_')
+plt.errorbar(Means3['fracBoth'], Means3['expBoth'], xerr= Errors3['fracBoth'],yerr= Errors3['expBoth'],
+              ls='none',marker='<',mfc='firebrick',mec='k',color='firebrick', ms=6,linewidth=1)
+
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.2))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+
+
+plt.xlabel('observed')
+plt.ylabel('expected if independent')
+plt.title('co-transformation frequencies')
+plt.legend(['y=x','0.05','0.1','0.5','1','2','3'],title = 'mean $\pm$ SEM',bbox_to_anchor =(1.05, 1))
+plt.xscale('log')
+plt.yscale('log')
+
+
+
+#%% CHI-square
+# overall Xsqrd = 4.99, p = 0.0253
+# OD 005 Xsqrd = 0.406, p = 0.524
+# OD 01 Xsqrd = 0.867, p = 0.352
+# OD 05 Xsqrd = 0.817, p = 0.366
+# OD 1 Xsqrd = 1.56, p = 0.22
+# OD 2 Xsqrd = 0.678, p = 0.41
+# OD 3 Xsqrd = 0.679, p = 0.41
+
+#Xsquare = sum(O-E)^2/E
+allChis = np.empty(len(ODdata))
+allChis[:] = np.nan
+ODdata = ODdata.reset_index()
+for idx, row in ODdata.iterrows():
+    print(idx)
+    observed = row['fracBoth']
+    expected = row['expBoth']
+    allChis[idx] = ((observed - expected)**2)/expected
+
+ChiSquared = np.sum(allChis)
+print(ChiSquared)
+
+allChis005 = np.empty(len(ODdata005))
+allChis005[:] = np.nan
+ODdata005 = ODdata005.reset_index()
+for idx, row in ODdata005.iterrows():
+    #print(idx)
+    observed = row['fracBoth']
+    expected = row['expBoth']
+    allChis005[idx] = ((observed - expected)**2)/expected
+
+ChiSquared005 = np.sum(allChis005)
+print(ChiSquared005)
+
+allChis01 = np.empty(len(ODdata01))
+allChis01[:] = np.nan
+ODdata01 = ODdata01.reset_index()
+for idx, row in ODdata01.iterrows():
+    #print(idx)
+    observed = row['fracBoth']
+    expected = row['expBoth']
+    allChis01[idx] = ((observed - expected)**2)/expected
+
+ChiSquared01 = np.sum(allChis01)
+print(ChiSquared01)
+
+allChis05 = np.empty(len(ODdata05))
+allChis05[:] = np.nan
+ODdata05 = ODdata05.reset_index()
+for idx, row in ODdata05.iterrows():
+    #print(idx)
+    observed = row['fracBoth']
+    expected = row['expBoth']
+    allChis05[idx] = ((observed - expected)**2)/expected
+
+ChiSquared05 = np.sum(allChis05)
+print(ChiSquared05)
+
+allChis1 = np.empty(len(ODdata1))
+allChis1[:] = np.nan
+ODdata1 = ODdata1.reset_index()
+for idx, row in ODdata1.iterrows():
+    #print(idx)
+    observed = row['fracBoth']
+    expected = row['expBoth']
+    allChis1[idx] = ((observed - expected)**2)/expected
+
+ChiSquared1 = np.sum(allChis1)
+print(ChiSquared1)
+
+allChis2 = np.empty(len(ODdata2))
+allChis2[:] = np.nan
+ODdata2 = ODdata2.reset_index()
+for idx, row in ODdata2.iterrows():
+    #print(idx)
+    observed = row['fracBoth']
+    expected = row['expBoth']
+    allChis2[idx] = ((observed - expected)**2)/expected
+
+ChiSquared2 = np.sum(allChis2)
+print(ChiSquared2)
+
+allChis3 = np.empty(len(ODdata3))
+allChis3[:] = np.nan
+ODdata3 = ODdata3.reset_index()
+for idx, row in ODdata3.iterrows():
+    #print(idx)
+    observed = row['fracBoth']
+    expected = row['expBoth']
+    allChis3[idx] = ((observed - expected)**2)/expected
+
+ChiSquared3 = np.sum(allChis3)
+print(ChiSquared3)
+
+allChisNoComp = np.empty(len(NoCompODdata))
+allChisNoComp[:] = np.nan
+NoCompODdata = NoCompODdata.reset_index()
+for idx, row in NoCompODdata.iterrows():
+    #print(idx)
+    observed = row['fracBoth']
+    expected = row['expBoth']
+    allChisNoComp[idx] = ((observed - expected)**2)/expected
+
+ChiSquaredNoComp = np.sum(allChisNoComp)
+print(ChiSquaredNoComp)
+
+
+
+#%%
+
+#%%
+
+fig, ax = plt.subplots()
+fig.set_size_inches(2, 2)
+plt.plot([0.001,1],[0.001,1],'k--')
+
+plt.plot(ODdata['expBoth'],ODdata['fracBoth'],'o',color='b',ms=4,alpha=0.2,mec='none',label='_nolegend_')
+plt.plot(SepBiBiData['expBoth'],SepBiBiData['fracBoth'],'o',color='g',ms=4,alpha=0.3,mec='none',label='_nolegend_')
+plt.plot(BiBiOnlyData['expBoth'],BiBiOnlyData['fracBoth'],'o',color = 'r',ms=4,alpha=0.3,mec='none',label='_nolegend_')
+
+# plt.errorbar(MeansSepOnlyData['expBoth'], MeansSepOnlyData['fracBoth'], xerr= ErrorsSepOnlyData['expBoth'],yerr= ErrorsSepOnlyData['fracBoth'],
+#              ls='none',marker='o',mfc='limegreen',mec='k',color='k', ms=5)
+
+# plt.errorbar(MeansTitrationData['expBoth'], MeansTitrationData['fracBoth'], xerr= ErrorsTitrationData['expBoth'],yerr= ErrorsTitrationData['fracBoth'],
+#              ls='none',marker='o',mfc='royalblue',mec='k',color='k', ms=5)
+
+# plt.errorbar(MeansBiBiOnlyData['expBoth'], MeansBiBiOnlyData['fracBoth'], xerr= ErrorsBiBiOnlyData['expBoth'],yerr= ErrorsBiBiOnlyData['fracBoth'],
+#              ls='none',marker='o',mfc='salmon',mec='k',color='k', ms=5)
+
+# Change major ticks to show every 20.
+ax.xaxis.set_major_locator(MultipleLocator(0.2))
+ax.yaxis.set_major_locator(MultipleLocator(0.2))
+
+# Change minor ticks to show every 5. (20/4 = 5)
+ax.xaxis.set_minor_locator(AutoMinorLocator(2))
+ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+
+# Turn grid on for both major and minor ticks and style minor slightly
+# differently.
+ax.grid(which='major', color='#CCCCCC', linestyle='-')
+#ax.grid(which='minor', color='#CCCCCC', linestyle='-')
+
+
+
+plt.ylabel('observed')
+plt.xlabel('expected if independent')
+plt.title('co-transformation frequencies')
+plt.legend(['y=x','mixed strains (pVS1 Bi)','mixed strains (pVS1 Bi + BBR1 Bi)','BiBi strains'],title = 'mean $\pm$ SEM',bbox_to_anchor =(1.05, 1))
+plt.xscale('log')
+plt.yscale('log')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
